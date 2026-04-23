@@ -49,6 +49,17 @@ func TestMigrate_AppliesUpMigrations(t *testing.T) {
 	}
 }
 
+func TestMigrate_FullRepoMigrationsApply(t *testing.T) {
+	d, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := Migrate(d, "../../migrations"); err != nil {
+		t.Fatalf("migrate against repo migrations failed: %v", err)
+	}
+}
+
 func TestMigrate_IdempotentSecondRun(t *testing.T) {
 	tmp := t.TempDir()
 	dir := tmp + "/migrations"
