@@ -60,4 +60,24 @@ var (
 		Name: "commentarr_indexer_circuit_state",
 		Help: "Current circuit-breaker state: 0=closed, 1=open, 2=half-open.",
 	}, []string{"indexer"})
+
+	// DownloadsQueuedTotal counts Add() calls.
+	DownloadsQueuedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_downloads_queued_total",
+		Help: "Downloads enqueued with the client.",
+	}, []string{"client"})
+
+	// DownloadsCompletedTotal counts observed terminal states.
+	// result ∈ {imported, failed, abandoned}
+	DownloadsCompletedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_downloads_completed_total",
+		Help: "Downloads that reached a terminal state, by client and result.",
+	}, []string{"client", "result"})
+
+	// DownloadDurationSeconds is the grab→terminal duration per client.
+	DownloadDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "commentarr_download_duration_seconds",
+		Help:    "Wall time from Add() to terminal status, per client.",
+		Buckets: []float64{30, 120, 600, 1800, 3600, 14400, 86400},
+	}, []string{"client"})
 )
