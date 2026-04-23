@@ -3,12 +3,16 @@ package download
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
 
 // fakeClient lets tests assert orchestration logic without HTTP.
+// All fields are guarded by mu; tests that mutate jobs from one
+// goroutine while the watcher reads from another would otherwise race.
 type fakeClient struct {
+	mu         sync.Mutex
 	name       string
 	jobs       map[string]Status
 	addCalled  int
@@ -18,6 +22,8 @@ type fakeClient struct {
 func (f *fakeClient) Name() string { return f.name }
 
 func (f *fakeClient) Add(ctx context.Context, req AddRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.addCalled++
 	id := "job-1"
 	if f.jobs == nil {
@@ -28,6 +34,8 @@ func (f *fakeClient) Add(ctx context.Context, req AddRequest) (string, error) {
 }
 
 func (f *fakeClient) Status(ctx context.Context, id string) (Status, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	s, ok := f.jobs[id]
 	if !ok {
 		return Status{}, errors.New("not found")
@@ -36,12 +44,16 @@ func (f *fakeClient) Status(ctx context.Context, id string) (Status, error) {
 }
 
 func (f *fakeClient) Remove(ctx context.Context, id string, deleteFiles bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.removeCall++
 	delete(f.jobs, id)
 	return nil
 }
 
 func (f *fakeClient) ListByCategory(ctx context.Context, category string) ([]Status, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]Status, 0, len(f.jobs))
 	for _, s := range f.jobs {
 		if s.Category == category {
@@ -49,6 +61,16 @@ func (f *fakeClient) ListByCategory(ctx context.Context, category string) ([]Sta
 		}
 	}
 	return out, nil
+}
+
+// setJob lets tests mutate state under the mutex.
+func (f *fakeClient) setJob(id string, s Status) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.jobs == nil {
+		f.jobs = map[string]Status{}
+	}
+	f.jobs[id] = s
 }
 
 func TestFakeClient_SatisfiesInterface(t *testing.T) {

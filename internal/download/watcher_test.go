@@ -23,7 +23,7 @@ func TestWatcher_FiresOnCompletion(t *testing.T) {
 	}()
 
 	time.Sleep(25 * time.Millisecond)
-	client.jobs["j1"] = Status{ClientJobID: "j1", State: StateCompleted, Category: "commentarr", CompletedAt: time.Now().UTC()}
+	client.setJob("j1", Status{ClientJobID: "j1", State: StateCompleted, Category: "commentarr", CompletedAt: time.Now().UTC()})
 
 	select {
 	case ev := <-events:
