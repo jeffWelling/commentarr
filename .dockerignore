@@ -1,0 +1,7 @@
+/bin
+/commentarr
+/commentarr.db*
+/.git
+/node_modules
+*.test
+*.out
