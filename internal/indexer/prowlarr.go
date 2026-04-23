@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jeffWelling/commentarr/internal/metrics"
 )
 
 // ProwlarrConfig configures a Prowlarr backend.
@@ -62,9 +65,11 @@ type prowlarrRelease struct {
 }
 
 // Search issues a single Prowlarr query with rate limiting + circuit
-// breaker + timeout.
+// breaker + timeout. Metrics are emitted regardless of outcome.
 func (p *Prowlarr) Search(ctx context.Context, q Query) ([]Release, error) {
+	start := time.Now()
 	if err := p.rl.Wait(ctx); err != nil {
+		metrics.IndexerQueriesTotal.WithLabelValues(p.cfg.Name, "rate_limited").Inc()
 		return nil, fmt.Errorf("rate-limit wait: %w", err)
 	}
 
@@ -74,6 +79,19 @@ func (p *Prowlarr) Search(ctx context.Context, q Query) ([]Release, error) {
 		results, err = p.doSearch(ctx, q)
 		return err
 	})
+
+	metrics.IndexerQueryDurationSeconds.WithLabelValues(p.cfg.Name).Observe(time.Since(start).Seconds())
+	metrics.IndexerCircuitState.WithLabelValues(p.cfg.Name).Set(float64(p.cb.State()))
+
+	switch {
+	case err == nil:
+		metrics.IndexerQueriesTotal.WithLabelValues(p.cfg.Name, "success").Inc()
+	case errors.Is(err, ErrCircuitOpen):
+		metrics.IndexerQueriesTotal.WithLabelValues(p.cfg.Name, "circuit_open").Inc()
+	default:
+		metrics.IndexerQueriesTotal.WithLabelValues(p.cfg.Name, "other").Inc()
+	}
+
 	return results, err
 }
 
@@ -108,6 +126,8 @@ func (p *Prowlarr) doSearch(ctx context.Context, q Query) ([]Release, error) {
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		metrics.IndexerQueriesRejectedByServerTotal.
+			WithLabelValues(p.cfg.Name, strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, fmt.Errorf("prowlarr %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 

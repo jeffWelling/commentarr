@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/jeffWelling/commentarr/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // prowlarrTestResponse mirrors the subset of Prowlarr's /api/v1/search
@@ -95,6 +98,26 @@ func TestProwlarrAdapter_AuthFailure(t *testing.T) {
 	_, err := p.Search(context.Background(), Query{Title: "x"})
 	if err == nil {
 		t.Fatal("expected error on 401")
+	}
+}
+
+func TestProwlarr_EmitsSuccessMetric(t *testing.T) {
+	metrics.IndexerQueriesTotal.Reset()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(prowlarrTestResponse{})
+	}))
+	defer server.Close()
+
+	rl := NewRateLimiter(RateLimitConfig{})
+	cb := NewCircuitBreaker(CircuitBreakerConfig{ConsecutiveFailureThreshold: 5, OpenDuration: time.Hour})
+	p := NewProwlarr(ProwlarrConfig{BaseURL: server.URL, APIKey: "k", Name: "metric-test"}, rl, cb)
+
+	if _, err := p.Search(context.Background(), Query{Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	got := testutil.ToFloat64(metrics.IndexerQueriesTotal.WithLabelValues("metric-test", "success"))
+	if got != 1 {
+		t.Fatalf("expected success counter=1, got %v", got)
 	}
 }
 

@@ -33,4 +33,31 @@ var (
 		Name: "commentarr_library_items_wanted_total",
 		Help: "Titles currently in the wanted queue, by library and kind.",
 	}, []string{"library", "kind"})
+
+	// IndexerQueriesTotal counts every indexer query by result.
+	// result ∈ {success, rate_limited, server_error, timeout, circuit_open, other}
+	IndexerQueriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_indexer_queries_total",
+		Help: "Indexer queries attempted, partitioned by indexer and result.",
+	}, []string{"indexer", "result"})
+
+	// IndexerQueriesRejectedByServerTotal counts 4xx/5xx from indexers.
+	IndexerQueriesRejectedByServerTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_indexer_queries_rejected_by_server_total",
+		Help: "Indexer queries rejected with an HTTP error, partitioned by indexer and status code.",
+	}, []string{"indexer", "status_code"})
+
+	// IndexerQueryDurationSeconds measures wall-clock time per query.
+	IndexerQueryDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "commentarr_indexer_query_duration_seconds",
+		Help:    "Indexer query wall time, in seconds.",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	}, []string{"indexer"})
+
+	// IndexerCircuitState exposes the current circuit state per indexer.
+	// 0=closed, 1=open, 2=half-open.
+	IndexerCircuitState = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "commentarr_indexer_circuit_state",
+		Help: "Current circuit-breaker state: 0=closed, 1=open, 2=half-open.",
+	}, []string{"indexer"})
 )
