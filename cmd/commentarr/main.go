@@ -1,5 +1,5 @@
-// Command commentarr is the Commentarr binary. Plan 1 ships only the
-// "scan" subcommand; later plans add serve, migrate, etc.
+// Command commentarr is the Commentarr binary. Plan 1 shipped the scan
+// subcommand; Plan 2 adds search. Later plans add serve, migrate, etc.
 package main
 
 import (
@@ -8,12 +8,16 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/jeffWelling/commentarr/internal/classify"
 	"github.com/jeffWelling/commentarr/internal/db"
+	"github.com/jeffWelling/commentarr/internal/indexer"
 	"github.com/jeffWelling/commentarr/internal/library"
 	"github.com/jeffWelling/commentarr/internal/queue"
+	"github.com/jeffWelling/commentarr/internal/search"
 	"github.com/jeffWelling/commentarr/internal/title"
+	"github.com/jeffWelling/commentarr/internal/verify"
 )
 
 func main() {
@@ -23,18 +27,25 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "scan":
-		if err := scan(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
+		must(scan(os.Args[2:]))
+	case "search":
+		must(searchCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
 	}
 }
 
+func must(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
-  commentarr scan -library <name> -root <path> -db <file>`)
+  commentarr scan   -root <path>   -db <file>
+  commentarr search -prowlarr-url <url> -prowlarr-api-key <key> -db <file>`)
 }
 
 func scan(args []string) error {
@@ -93,5 +104,58 @@ func scan(args []string) error {
 
 	fmt.Printf("Scanned %d titles from %q; %d wanted (no commentary found).\n",
 		len(titles), *libName, wanted)
+	return nil
+}
+
+func searchCmd(args []string) error {
+	fs := flag.NewFlagSet("search", flag.ExitOnError)
+	baseURL := fs.String("prowlarr-url", "", "Prowlarr base URL (required)")
+	apiKey := fs.String("prowlarr-api-key", "", "Prowlarr API key (required)")
+	name := fs.String("prowlarr-name", "prowlarr", "Prowlarr indexer label")
+	rpm := fs.Int("requests-per-minute", 6, "Prowlarr rate limit")
+	burst := fs.Int("burst", 3, "Prowlarr burst")
+	threshold := fs.Int("score-threshold", 8, "release-score threshold for likely-commentary flag")
+	dsn := fs.String("db", ":memory:", "SQLite DSN")
+	migrations := fs.String("migrations", "./migrations", "migrations directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *baseURL == "" || *apiKey == "" {
+		return fmt.Errorf("search: -prowlarr-url and -prowlarr-api-key are required")
+	}
+
+	d, err := db.Open(*dsn)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := db.Migrate(d, *migrations); err != nil {
+		return err
+	}
+
+	rl := indexer.NewRateLimiter(indexer.RateLimitConfig{RequestsPerMinute: *rpm, Burst: *burst})
+	cb := indexer.NewCircuitBreaker(indexer.CircuitBreakerConfig{
+		ConsecutiveFailureThreshold: 5,
+		OpenDuration:                time.Hour,
+	})
+	idx := indexer.NewProwlarr(indexer.ProwlarrConfig{
+		BaseURL: *baseURL, APIKey: *apiKey, Name: *name,
+	}, rl, cb)
+
+	searcher := search.NewSearcher(
+		[]indexer.Indexer{idx},
+		verify.NewVerifier(verify.DefaultRules(), *threshold),
+		search.NewRepo(d),
+		queue.New(d),
+		title.NewRepo(d),
+		100,
+	)
+
+	ctx := context.Background()
+	n, err := searcher.SearchDue(ctx, time.Now())
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+	fmt.Printf("Searched %d title(s).\n", n)
 	return nil
 }
