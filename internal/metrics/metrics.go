@@ -123,4 +123,35 @@ var (
 		Name: "commentarr_webhook_queue_depth",
 		Help: "Pending webhook deliveries waiting to fire.",
 	})
+
+	// ImportsTotal counts completed imports by library/mode/result.
+	ImportsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_imports_total",
+		Help: "Imports attempted, partitioned by library, mode, and result.",
+	}, []string{"library", "mode", "result"})
+
+	// ImportDurationSeconds measures post-download import wall time.
+	ImportDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "commentarr_import_duration_seconds",
+		Help:    "Import pipeline wall time, seconds.",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	}, []string{"library", "mode"})
+
+	// ReplacesTotal counts replace attempts by outcome.
+	ReplacesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_replaces_total",
+		Help: "Replace attempts, partitioned by library and result.",
+	}, []string{"library", "result"})
+
+	// SafetyViolationsTotal counts violations by rule.
+	SafetyViolationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_safety_violations_total",
+		Help: "Safety rule violations, partitioned by rule name.",
+	}, []string{"rule_name"})
+
+	// NonCompliantFilesTotal counts files that tripped validation.
+	NonCompliantFilesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_non_compliant_files_total",
+		Help: "Files rejected during validation, partitioned by reason and extension.",
+	}, []string{"reason", "extension"})
 )

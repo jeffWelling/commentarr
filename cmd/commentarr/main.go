@@ -12,12 +12,17 @@ import (
 
 	"github.com/jeffWelling/commentarr/internal/classify"
 	"github.com/jeffWelling/commentarr/internal/db"
+	"github.com/jeffWelling/commentarr/internal/importer"
 	"github.com/jeffWelling/commentarr/internal/indexer"
 	"github.com/jeffWelling/commentarr/internal/library"
+	"github.com/jeffWelling/commentarr/internal/placer"
 	"github.com/jeffWelling/commentarr/internal/queue"
+	"github.com/jeffWelling/commentarr/internal/safety"
 	"github.com/jeffWelling/commentarr/internal/search"
 	"github.com/jeffWelling/commentarr/internal/title"
+	"github.com/jeffWelling/commentarr/internal/trash"
 	"github.com/jeffWelling/commentarr/internal/verify"
+	"github.com/jeffWelling/commentarr/internal/webhook"
 )
 
 func main() {
@@ -30,6 +35,8 @@ func main() {
 		must(scan(os.Args[2:]))
 	case "search":
 		must(searchCmd(os.Args[2:]))
+	case "import":
+		must(importCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -45,7 +52,8 @@ func must(err error) {
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
   commentarr scan   -root <path>   -db <file>
-  commentarr search -prowlarr-url <url> -prowlarr-api-key <key> -db <file>`)
+  commentarr search -prowlarr-url <url> -prowlarr-api-key <key> -db <file>
+  commentarr import -new-file <path> -original <path> -title-id <id> -title <name> [-mode sidecar|replace|separate-library]`)
 }
 
 func scan(args []string) error {
@@ -157,5 +165,73 @@ func searchCmd(args []string) error {
 		return fmt.Errorf("search: %w", err)
 	}
 	fmt.Printf("Searched %d title(s).\n", n)
+	return nil
+}
+
+func importCmd(args []string) error {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	newPath := fs.String("new-file", "", "downloaded file to import (required)")
+	origPath := fs.String("original", "", "original file to replace / live beside (required for replace/sidecar)")
+	titleID := fs.String("title-id", "", "title id (required)")
+	titleName := fs.String("title", "", "display title (required)")
+	year := fs.String("year", "", "release year")
+	edition := fs.String("edition", "", "edition label (e.g. Criterion)")
+	mode := fs.String("mode", "sidecar", "placement mode: replace | sidecar | separate-library")
+	libName := fs.String("library", "local", "library label")
+	trashDir := fs.String("trash", "", "trash directory (required for replace)")
+	separateRoot := fs.String("separate-root", "", "alt library root (required for separate-library)")
+	template := fs.String("template", "{title} ({year}) - {edition}.{ext}", "filename template")
+	dsn := fs.String("db", ":memory:", "SQLite DSN")
+	migrations := fs.String("migrations", "./migrations", "migrations directory")
+	confidenceMin := fs.Float64("confidence-min", 0.85, "classifier confidence threshold")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *newPath == "" || *titleID == "" || *titleName == "" {
+		return fmt.Errorf("import: -new-file, -title-id, -title are required")
+	}
+
+	d, err := db.Open(*dsn)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := db.Migrate(d, *migrations); err != nil {
+		return err
+	}
+
+	pl := placer.New(placer.Config{
+		Mode:             placer.Mode(*mode),
+		FilenameTemplate: *template,
+		TrashDir:         *trashDir,
+		SeparateRoot:     *separateRoot,
+	})
+	repo := title.NewRepo(d)
+	_ = repo.Insert(context.Background(), title.Title{
+		ID:          *titleID,
+		Kind:        title.KindMovie,
+		DisplayName: *titleName,
+		FilePath:    *newPath,
+	})
+	cls := classify.NewService(repo, classify.NewPipelineClassifier(), "commentarr-plan3", *libName)
+	tr := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
+	disp := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
+
+	imp := importer.New(importer.Deps{
+		Classify: cls, Placer: pl, Trash: tr, Webhook: disp,
+		SafetyCfg: safety.BuiltinConfig{
+			ClassifierConfidenceThreshold: *confidenceMin,
+			RequireMagicMatch:             true,
+		},
+		Library: *libName,
+	})
+	res, err := imp.Import(context.Background(), importer.Request{
+		NewFilePath: *newPath, OriginalFilePath: *origPath,
+		Title: *titleName, Year: *year, Edition: *edition, TitleID: *titleID,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Outcome: %s  Final: %s  Trashed: %s\n", res.Outcome, res.FinalPath, res.TrashedPath)
 	return nil
 }
