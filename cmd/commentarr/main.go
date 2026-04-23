@@ -37,6 +37,8 @@ func main() {
 		must(searchCmd(os.Args[2:]))
 	case "import":
 		must(importCmd(os.Args[2:]))
+	case "serve":
+		must(serveCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -53,7 +55,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
   commentarr scan   -root <path>   -db <file>
   commentarr search -prowlarr-url <url> -prowlarr-api-key <key> -db <file>
-  commentarr import -new-file <path> -original <path> -title-id <id> -title <name> [-mode sidecar|replace|separate-library]`)
+  commentarr import -new-file <path> -original <path> -title-id <id> -title <name> [-mode sidecar|replace|separate-library]
+  commentarr serve  -addr :7878 -db commentarr.db [-local-bypass-cidr 127.0.0.0/8]`)
 }
 
 func scan(args []string) error {
