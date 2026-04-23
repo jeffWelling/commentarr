@@ -9,6 +9,7 @@ import (
 
 	classifier "github.com/jeffWelling/commentary-classifier"
 	"github.com/jeffWelling/commentary-classifier/pipeline"
+	"github.com/jeffWelling/commentarr/internal/metrics"
 	"github.com/jeffWelling/commentarr/internal/title"
 )
 
@@ -23,11 +24,14 @@ type Service struct {
 	repo    title.Repo
 	cls     Classifier
 	version string // classifier module version string, recorded on each verdict
+	library string // library label for metrics partitioning
 }
 
-// NewService returns a Service.
-func NewService(repo title.Repo, cls Classifier, version string) *Service {
-	return &Service{repo: repo, cls: cls, version: version}
+// NewService returns a Service. The library label is used as a
+// Prometheus metric label — pass the name of the LibrarySource a given
+// Service instance is scanning on behalf of.
+func NewService(repo title.Repo, cls Classifier, version, library string) *Service {
+	return &Service{repo: repo, cls: cls, version: version, library: library}
 }
 
 // ClassifyTitle runs the classifier against the title's file and persists
@@ -39,8 +43,12 @@ func NewService(repo title.Repo, cls Classifier, version string) *Service {
 // confidence among non-commentary tracks (i.e. how sure we are that NO
 // track is commentary).
 func (s *Service) ClassifyTitle(ctx context.Context, t title.Title) (title.Verdict, error) {
+	start := time.Now()
 	results, err := s.cls.ClassifyFile(t.FilePath)
+	metrics.ClassificationDurationSeconds.WithLabelValues(s.library).Observe(time.Since(start).Seconds())
+
 	if err != nil {
+		metrics.ClassificationsTotal.WithLabelValues(s.library, "error").Inc()
 		return title.Verdict{}, fmt.Errorf("classify %s: %w", t.FilePath, err)
 	}
 
@@ -66,8 +74,10 @@ func (s *Service) ClassifyTitle(ctx context.Context, t title.Title) (title.Verdi
 	if maxCommentary > 0 {
 		verdict.HasCommentary = true
 		verdict.Confidence = maxCommentary
+		metrics.ClassificationsTotal.WithLabelValues(s.library, "commentary").Inc()
 	} else {
 		verdict.Confidence = maxNotCommentary
+		metrics.ClassificationsTotal.WithLabelValues(s.library, "not_commentary").Inc()
 	}
 
 	if err := s.repo.SaveVerdict(ctx, verdict); err != nil {

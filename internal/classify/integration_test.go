@@ -68,7 +68,7 @@ func TestScan_EndToEnd(t *testing.T) {
 			}
 		}
 	}
-	svc := classify.NewService(repo, cls, "integration-v0")
+	svc := classify.NewService(repo, cls, "integration-v0", "fs-test")
 
 	for _, tt := range titles {
 		v, err := svc.ClassifyTitle(context.Background(), tt)

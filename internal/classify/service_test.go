@@ -9,7 +9,9 @@ import (
 
 	classifier "github.com/jeffWelling/commentary-classifier"
 	"github.com/jeffWelling/commentarr/internal/db"
+	"github.com/jeffWelling/commentarr/internal/metrics"
 	"github.com/jeffWelling/commentarr/internal/title"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type stubFn func(path string) ([]classifier.TrackResult, error)
@@ -27,7 +29,7 @@ func newServiceWithStub(t *testing.T, fn stubFn) (*Service, title.Repo) {
 		t.Fatal(err)
 	}
 	repo := title.NewRepo(d)
-	return NewService(repo, fn, "test-v0"), repo
+	return NewService(repo, fn, "test-v0", "test-library"), repo
 }
 
 func TestService_ClassifyTitle_CommentaryDetected(t *testing.T) {
@@ -94,6 +96,42 @@ func TestPipelineClassifier_RejectsMissingFile(t *testing.T) {
 	pc := NewPipelineClassifier()
 	if _, err := pc.ClassifyFile("/definitely/not/a/real/file.mkv"); err == nil {
 		t.Fatal("expected error for bogus path")
+	}
+}
+
+func TestService_EmitsCommentaryMetric(t *testing.T) {
+	metrics.ClassificationsTotal.Reset()
+	svc, repo := newServiceWithStub(t, func(path string) ([]classifier.TrackResult, error) {
+		return []classifier.TrackResult{
+			{TrackIndex: 0, Recommendation: "commentary", CommentaryConfidence: 0.9},
+		}, nil
+	})
+	tt := title.Title{ID: "m:1", Kind: title.KindMovie, DisplayName: "M", FilePath: "/m.mkv"}
+	if err := repo.Insert(context.Background(), tt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ClassifyTitle(context.Background(), tt); err != nil {
+		t.Fatal(err)
+	}
+	got := testutil.ToFloat64(metrics.ClassificationsTotal.WithLabelValues("test-library", "commentary"))
+	if got != 1 {
+		t.Fatalf("expected commentary counter=1, got %v", got)
+	}
+}
+
+func TestService_EmitsErrorMetric(t *testing.T) {
+	metrics.ClassificationsTotal.Reset()
+	svc, repo := newServiceWithStub(t, func(path string) ([]classifier.TrackResult, error) {
+		return nil, errors.New("boom")
+	})
+	tt := title.Title{ID: "err:1", Kind: title.KindMovie, DisplayName: "E", FilePath: "/e.mkv"}
+	if err := repo.Insert(context.Background(), tt); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = svc.ClassifyTitle(context.Background(), tt)
+	got := testutil.ToFloat64(metrics.ClassificationsTotal.WithLabelValues("test-library", "error"))
+	if got != 1 {
+		t.Fatalf("expected error counter=1, got %v", got)
 	}
 }
 
