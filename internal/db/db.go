@@ -10,10 +10,17 @@ import (
 
 // Open returns a *sql.DB connected to the given SQLite DSN. Use ":memory:"
 // for tests, a file path like "/config/commentarr.db" for production.
+//
+// For ":memory:" DSNs, the returned pool is capped at one connection so
+// in-memory state is shared across queries. (Each connection in modernc's
+// sqlite driver would otherwise get its own independent in-memory DB.)
 func Open(dsn string) (*sql.DB, error) {
 	d, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", dsn, err)
+	}
+	if dsn == ":memory:" {
+		d.SetMaxOpenConns(1)
 	}
 	if _, err := d.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`); err != nil {
 		d.Close()
