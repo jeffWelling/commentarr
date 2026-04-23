@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // Kind distinguishes movies from TV episodes.
@@ -29,11 +30,22 @@ type Title struct {
 	FilePath    string
 }
 
-// Repo persists Title rows.
+// Verdict is the per-title output of the classifier.
+type Verdict struct {
+	TitleID           string
+	HasCommentary     bool
+	Confidence        float64
+	ClassifierVersion string
+	ClassifiedAt      time.Time
+}
+
+// Repo persists Title rows and their Verdicts.
 type Repo interface {
 	Insert(ctx context.Context, t Title) error
 	FindByID(ctx context.Context, id string) (Title, error)
 	List(ctx context.Context) ([]Title, error)
+	SaveVerdict(ctx context.Context, v Verdict) error
+	GetVerdict(ctx context.Context, titleID string) (Verdict, error)
 }
 
 type titleRepo struct{ db *sql.DB }
@@ -105,6 +117,37 @@ func (r *titleRepo) List(ctx context.Context) ([]Title, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// SaveVerdict upserts a verdict for title_id.
+func (r *titleRepo) SaveVerdict(ctx context.Context, v Verdict) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO title_verdicts
+		  (title_id, has_commentary, confidence, classifier_version, classified_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(title_id) DO UPDATE SET
+		  has_commentary = excluded.has_commentary,
+		  confidence = excluded.confidence,
+		  classifier_version = excluded.classifier_version,
+		  classified_at = excluded.classified_at`,
+		v.TitleID, v.HasCommentary, v.Confidence, v.ClassifierVersion, v.ClassifiedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("save verdict %s: %w", v.TitleID, err)
+	}
+	return nil
+}
+
+// GetVerdict returns the verdict for title_id.
+func (r *titleRepo) GetVerdict(ctx context.Context, titleID string) (Verdict, error) {
+	var v Verdict
+	err := r.db.QueryRowContext(ctx, `
+		SELECT title_id, has_commentary, confidence, classifier_version, classified_at
+		FROM title_verdicts WHERE title_id = ?`, titleID).
+		Scan(&v.TitleID, &v.HasCommentary, &v.Confidence, &v.ClassifierVersion, &v.ClassifiedAt)
+	if err != nil {
+		return Verdict{}, fmt.Errorf("get verdict %s: %w", titleID, err)
+	}
+	return v, nil
 }
 
 func nullableString(s string) interface{} {

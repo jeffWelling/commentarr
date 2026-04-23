@@ -3,6 +3,7 @@ package title
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jeffWelling/commentarr/internal/db"
 )
@@ -75,6 +76,59 @@ func TestRepo_InsertEpisodeWithSeriesID(t *testing.T) {
 	}
 	if got.Kind != KindEpisode || got.SeriesID != "jf:series:s1" || got.Season != 1 || got.Episode != 1 {
 		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+func TestRepo_SaveAndGetVerdict(t *testing.T) {
+	r := newTestDB(t)
+	ctx := context.Background()
+	if err := r.Insert(ctx, Title{ID: "tst:1", Kind: KindMovie, DisplayName: "X", FilePath: "/x.mkv"}); err != nil {
+		t.Fatal(err)
+	}
+	v := Verdict{
+		TitleID:           "tst:1",
+		HasCommentary:     true,
+		Confidence:        0.91,
+		ClassifierVersion: "v0.1.0",
+		ClassifiedAt:      time.Now().UTC().Truncate(time.Second),
+	}
+	if err := r.SaveVerdict(ctx, v); err != nil {
+		t.Fatalf("SaveVerdict: %v", err)
+	}
+	got, err := r.GetVerdict(ctx, "tst:1")
+	if err != nil {
+		t.Fatalf("GetVerdict: %v", err)
+	}
+	if !got.HasCommentary || got.Confidence != 0.91 || got.ClassifierVersion != "v0.1.0" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+func TestRepo_SaveVerdict_UpsertsOnConflict(t *testing.T) {
+	r := newTestDB(t)
+	ctx := context.Background()
+	if err := r.Insert(ctx, Title{ID: "u:1", Kind: KindMovie, DisplayName: "U", FilePath: "/u.mkv"}); err != nil {
+		t.Fatal(err)
+	}
+	first := Verdict{TitleID: "u:1", HasCommentary: false, Confidence: 0.5, ClassifierVersion: "v0", ClassifiedAt: time.Now().UTC()}
+	second := Verdict{TitleID: "u:1", HasCommentary: true, Confidence: 0.9, ClassifierVersion: "v1", ClassifiedAt: time.Now().UTC().Add(time.Minute)}
+	if err := r.SaveVerdict(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SaveVerdict(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := r.GetVerdict(ctx, "u:1")
+	if !got.HasCommentary || got.Confidence != 0.9 || got.ClassifierVersion != "v1" {
+		t.Fatalf("upsert did not replace: %+v", got)
+	}
+}
+
+func TestRepo_GetVerdict_NotFound(t *testing.T) {
+	r := newTestDB(t)
+	_, err := r.GetVerdict(context.Background(), "missing")
+	if err == nil {
+		t.Fatal("expected error for missing verdict")
 	}
 }
 
