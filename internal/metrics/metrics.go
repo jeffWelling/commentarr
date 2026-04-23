@@ -80,4 +80,28 @@ var (
 		Help:    "Wall time from Add() to terminal status, per client.",
 		Buckets: []float64{30, 120, 600, 1800, 3600, 14400, 86400},
 	}, []string{"client"})
+
+	// TrashItems is the current count of items in trash per library.
+	TrashItems = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "commentarr_trash_items",
+		Help: "Current count of items in trash, partitioned by library.",
+	}, []string{"library"})
+
+	// TrashSizeBytes is the total size of items in trash per library.
+	TrashSizeBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "commentarr_trash_size_bytes",
+		Help: "Total size of items in trash, bytes.",
+	}, []string{"library"})
+
+	// TrashItemsPurgedTotal counts purges (age-out, manual delete).
+	TrashItemsPurgedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_trash_items_purged_total",
+		Help: "Total trash items purged, partitioned by library.",
+	}, []string{"library"})
+
+	// TrashItemsRestoredTotal counts restores.
+	TrashItemsRestoredTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_trash_items_restored_total",
+		Help: "Total trash items restored, partitioned by library.",
+	}, []string{"library"})
 )
