@@ -104,4 +104,23 @@ var (
 		Name: "commentarr_trash_items_restored_total",
 		Help: "Total trash items restored, partitioned by library.",
 	}, []string{"library"})
+
+	// WebhookDeliveriesTotal counts deliveries by event and result.
+	WebhookDeliveriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_webhook_deliveries_total",
+		Help: "Total webhook deliveries attempted.",
+	}, []string{"event", "result"})
+
+	// WebhookDeliveryDurationSeconds is per-delivery HTTP time.
+	WebhookDeliveryDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "commentarr_webhook_delivery_duration_seconds",
+		Help:    "Webhook HTTP POST wall time, seconds.",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"event"})
+
+	// WebhookQueueDepth is the pending delivery count.
+	WebhookQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "commentarr_webhook_queue_depth",
+		Help: "Pending webhook deliveries waiting to fire.",
+	})
 )
