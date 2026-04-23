@@ -3,8 +3,10 @@
 *.out
 /bin/
 /coverage.*
-# The compiled binary (go build ./cmd/commentarr drops it at repo root)
+# The compiled binary (go build drops it wherever cwd was)
 /commentarr
+/**/commentarr
+!/cmd/commentarr/
 
 # Local dev artifacts
 /commentarr.db
