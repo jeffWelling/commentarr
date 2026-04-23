@@ -1,0 +1,18 @@
+# Go
+*.test
+*.out
+/bin/
+/coverage.*
+
+# Local dev artifacts
+/commentarr.db
+/commentarr.db-wal
+/commentarr.db-shm
+/config/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
