@@ -3,6 +3,7 @@ package classify
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -83,6 +84,16 @@ func TestService_ClassifyTitle_NoCommentary(t *testing.T) {
 	}
 	if v.Confidence != 0.88 {
 		t.Fatalf("expected 0.88 got %f", v.Confidence)
+	}
+}
+
+func TestPipelineClassifier_RejectsMissingFile(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH; skipping integration test")
+	}
+	pc := NewPipelineClassifier()
+	if _, err := pc.ClassifyFile("/definitely/not/a/real/file.mkv"); err == nil {
+		t.Fatal("expected error for bogus path")
 	}
 }
 

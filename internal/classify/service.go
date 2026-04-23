@@ -8,6 +8,7 @@ import (
 	"time"
 
 	classifier "github.com/jeffWelling/commentary-classifier"
+	"github.com/jeffWelling/commentary-classifier/pipeline"
 	"github.com/jeffWelling/commentarr/internal/title"
 )
 
@@ -73,4 +74,25 @@ func (s *Service) ClassifyTitle(ctx context.Context, t title.Title) (title.Verdi
 		return title.Verdict{}, fmt.Errorf("save verdict %s: %w", t.ID, err)
 	}
 	return verdict, nil
+}
+
+// PipelineClassifier is the production Classifier — a thin adapter around
+// commentary-classifier's pipeline.ClassifyFile.
+type PipelineClassifier struct {
+	Config pipeline.Config
+}
+
+// NewPipelineClassifier returns a PipelineClassifier using the classifier
+// module's default configuration.
+func NewPipelineClassifier() *PipelineClassifier {
+	return &PipelineClassifier{Config: pipeline.Default()}
+}
+
+// ClassifyFile implements Classifier by delegating to pipeline.ClassifyFile.
+func (p *PipelineClassifier) ClassifyFile(path string) ([]classifier.TrackResult, error) {
+	result, err := pipeline.ClassifyFile(path, p.Config)
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
 }
