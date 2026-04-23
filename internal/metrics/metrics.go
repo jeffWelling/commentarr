@@ -154,4 +154,23 @@ var (
 		Name: "commentarr_non_compliant_files_total",
 		Help: "Files rejected during validation, partitioned by reason and extension.",
 	}, []string{"reason", "extension"})
+
+	// HTTPRequestsTotal counts every request received.
+	HTTPRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_http_requests_total",
+		Help: "HTTP requests received.",
+	}, []string{"method", "route", "status"})
+
+	// HTTPRequestDurationSeconds is the server-handler wall time.
+	HTTPRequestDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "commentarr_http_request_duration_seconds",
+		Help:    "HTTP request-handling wall time, seconds.",
+		Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	}, []string{"method", "route"})
+
+	// HTTPRequestsInFlight is the current request concurrency.
+	HTTPRequestsInFlight = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "commentarr_http_requests_in_flight",
+		Help: "HTTP requests currently being served.",
+	})
 )
