@@ -21,7 +21,17 @@ commentarr serve
   -migrations        migrations directory           default "./migrations"
   -local-bypass-cidr CIDR that bypasses auth        default ""  (disabled)
   -initial-key-label label for the first API key    default "default"
+  -prowlarr-url      Prowlarr base URL              default ""  (no card shown)
+  -prowlarr-name     Prowlarr instance label        default "prowlarr"
+  -qbit-url          qBittorrent base URL           default ""  (no card shown)
+  -qbit-name         qBittorrent instance label     default "qbittorrent"
 ```
+
+The `-prowlarr-url` / `-qbit-url` flags surface the configured instances
+in the UI (via `/api/v1/indexers` and `/api/v1/download-clients`). They
+do **not** yet wire those instances into the search / download pipeline
+run by `serve` — run `commentarr search` / `commentarr import` as
+cron jobs for the pipeline itself until the in-process daemon lands.
 
 Notes:
 
@@ -126,6 +136,8 @@ for the full set; key groups:
   the admin row on first startup via `COMMENTARR_ADMIN_USERNAME` +
   `COMMENTARR_ADMIN_PASSWORD`.
 - `localBypassCIDR` — a single CIDR that bypasses API-key auth.
+- `connections.prowlarr.*` / `connections.qbittorrent.*` — optional
+  baseURL + label for the read-only connection cards in the UI.
 - `persistence.*` — data PVC size and storage class.
 - `mediaLibrary.*` — how the media mount is sourced (emptyDir / PVC / hostPath).
 - `ingress.*` — optional Ingress with annotation pluggability.

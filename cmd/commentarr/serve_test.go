@@ -98,6 +98,40 @@ func newTestAuthRepo(t *testing.T) *auth.Repo {
 	return auth.NewRepo(d)
 }
 
+func TestInfoFromProwlarr_EmptyURLReturnsNil(t *testing.T) {
+	if got := infoFromProwlarr("", "prowlarr"); got != nil {
+		t.Errorf("expected nil, got %+v", got)
+	}
+}
+
+func TestInfoFromProwlarr_PopulatesFields(t *testing.T) {
+	got := infoFromProwlarr("http://prowlarr:9696", "main")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if got[0].BaseURL != "http://prowlarr:9696" || got[0].Name != "main" ||
+		got[0].Kind != "prowlarr" || !got[0].Enabled {
+		t.Errorf("unexpected entry: %+v", got[0])
+	}
+}
+
+func TestInfoFromQbit_EmptyURLReturnsNil(t *testing.T) {
+	if got := infoFromQbit("", "qbit"); got != nil {
+		t.Errorf("expected nil, got %+v", got)
+	}
+}
+
+func TestInfoFromQbit_PopulatesFields(t *testing.T) {
+	got := infoFromQbit("http://qbit:8080", "hot")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if got[0].Kind != "qbittorrent" || got[0].BaseURL != "http://qbit:8080" ||
+		got[0].Name != "hot" || !got[0].Enabled {
+		t.Errorf("unexpected entry: %+v", got[0])
+	}
+}
+
 // resolveMigrations walks upward from the test binary until it finds a
 // migrations/ directory. Needed because `go test` runs with cwd =
 // cmd/commentarr/, not the repo root.

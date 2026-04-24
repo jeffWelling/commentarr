@@ -27,6 +27,18 @@ auth:
 # X-Forwarded-For — only use on trusted networks.
 localBypassCIDR: ""
 
+# Connection hints shown in the UI. Setting baseURL on either of these
+# makes it appear in /api/v1/indexers or /api/v1/download-clients
+# respectively. Credentials still live at runtime (created via the UI
+# after first login); this is purely the read-only connection card.
+connections:
+  prowlarr:
+    baseURL: ""
+    name: prowlarr
+  qbittorrent:
+    baseURL: ""
+    name: qbittorrent
+
 service:
   type: ClusterIP
   port: 7878

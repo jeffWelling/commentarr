@@ -32,6 +32,10 @@ func serveCmd(args []string) error {
 	migrations := fset.String("migrations", "./migrations", "migrations directory")
 	bypassCIDR := fset.String("local-bypass-cidr", "", "CIDR range that bypasses auth (e.g. 127.0.0.0/8)")
 	initialKeyLabel := fset.String("initial-key-label", "default", "label for the auto-generated first API key")
+	prowlarrURL := fset.String("prowlarr-url", "", "Prowlarr base URL (optional; shows up in the UI when set)")
+	prowlarrName := fset.String("prowlarr-name", "prowlarr", "Prowlarr instance label")
+	qbitURL := fset.String("qbit-url", "", "qBittorrent base URL (optional; shows up in the UI when set)")
+	qbitName := fset.String("qbit-name", "qbittorrent", "qBittorrent instance label")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -59,7 +63,10 @@ func serveCmd(args []string) error {
 		LocalBypassCIDRs: splitCIDRs(*bypassCIDR),
 	})
 
-	mountAPIV1(server, authMW, d, broker)
+	mountAPIV1(server, authMW, d, broker, serveConnections{
+		indexers:        infoFromProwlarr(*prowlarrURL, *prowlarrName),
+		downloadClients: infoFromQbit(*qbitURL, *qbitName),
+	})
 	// Serve the embedded React SPA at "/" — the FS falls back to
 	// index.html for unknown paths so client-side routing works on
 	// hard refresh.
@@ -141,7 +148,17 @@ func bootstrapAPIKey(repo *auth.Repo, label string) error {
 	return nil
 }
 
-func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d *sql.DB, broker *sse.Broker) {
+// serveConnections bundles the statically-configured integrations that
+// we currently surface read-only in the API. A future iteration will
+// replace these with a DB-backed registry that the UI can edit at
+// runtime; for now they're populated from flags so an operator can see
+// what the daemon was started with.
+type serveConnections struct {
+	indexers        []v1.IndexerInfo
+	downloadClients []v1.DownloadClientInfo
+}
+
+func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d *sql.DB, broker *sse.Broker, conn serveConnections) {
 	titleRepo := title.NewRepo(d)
 	q := queue.New(d)
 	candRepo := search.NewRepo(d)
@@ -152,13 +169,31 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 
 	s.Mount("/api/v1/library", authMW(v1.NewLibraryHandler(titleRepo)))
 	s.Mount("/api/v1/wanted", authMW(v1.NewWantedHandler(q, candRepo)))
-	s.Mount("/api/v1/indexers", authMW(v1.NewIndexerHandler(nil)))        // Plan 4 scope: empty list; wire in Plan 5
-	s.Mount("/api/v1/download-clients", authMW(v1.NewDownloadHandler(nil))) // same
+	s.Mount("/api/v1/indexers", authMW(v1.NewIndexerHandler(conn.indexers)))
+	s.Mount("/api/v1/download-clients", authMW(v1.NewDownloadHandler(conn.downloadClients)))
 	s.Mount("/api/v1/trash", authMW(v1.NewTrashHandler(trashRepo)))
 	s.Mount("/api/v1/safety", authMW(v1.NewSafetyHandler(safetyRepo)))
 	s.Mount("/api/v1/webhooks", authMW(v1.NewWebhooksHandler(webhookRepo, dispatcher)))
 
 	s.Router().Mount("/api/v1/events", authMW(sse.NewHandler(broker)))
+}
+
+// infoFromProwlarr builds an IndexerInfo slice for a configured Prowlarr
+// instance (or returns nil if the URL is empty).
+func infoFromProwlarr(baseURL, name string) []v1.IndexerInfo {
+	if baseURL == "" {
+		return nil
+	}
+	return []v1.IndexerInfo{{Name: name, Kind: "prowlarr", BaseURL: baseURL, Enabled: true}}
+}
+
+// infoFromQbit builds a DownloadClientInfo slice for a configured
+// qBittorrent instance (or returns nil if the URL is empty).
+func infoFromQbit(baseURL, name string) []v1.DownloadClientInfo {
+	if baseURL == "" {
+		return nil
+	}
+	return []v1.DownloadClientInfo{{Name: name, Kind: "qbittorrent", BaseURL: baseURL, Enabled: true}}
 }
 
 func splitCIDRs(s string) []string {

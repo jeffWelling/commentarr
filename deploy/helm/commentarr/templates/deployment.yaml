@@ -38,6 +38,18 @@ spec:
             - -local-bypass-cidr
             - {{ . | quote }}
             {{- end }}
+            {{- with .Values.connections.prowlarr.baseURL }}
+            - -prowlarr-url
+            - {{ . | quote }}
+            - -prowlarr-name
+            - {{ $.Values.connections.prowlarr.name | default "prowlarr" | quote }}
+            {{- end }}
+            {{- with .Values.connections.qbittorrent.baseURL }}
+            - -qbit-url
+            - {{ . | quote }}
+            - -qbit-name
+            - {{ $.Values.connections.qbittorrent.name | default "qbittorrent" | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 7878
