@@ -44,15 +44,12 @@ func (b *Broker) Unsubscribe(ch chan Event) {
 }
 
 // Publish sends e to every subscriber. Non-blocking: a slow subscriber
-// drops the event.
+// drops the event. We hold the mutex through the send so Unsubscribe
+// can't close a channel mid-send ("send on closed channel" panic).
 func (b *Broker) Publish(e Event) {
 	b.mu.Lock()
-	subs := make([]chan Event, 0, len(b.subs))
+	defer b.mu.Unlock()
 	for ch := range b.subs {
-		subs = append(subs, ch)
-	}
-	b.mu.Unlock()
-	for _, ch := range subs {
 		select {
 		case ch <- e:
 		default:
