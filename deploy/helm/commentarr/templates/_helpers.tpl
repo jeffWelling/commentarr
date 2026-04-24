@@ -67,13 +67,3 @@ Auth secret name.
 {{- end -}}
 {{- end }}
 
-{{/*
-Connections secret name.
-*/}}
-{{- define "commentarr.connectionsSecretName" -}}
-{{- if .Values.connections.existingConnectionsSecret -}}
-{{- .Values.connections.existingConnectionsSecret -}}
-{{- else -}}
-{{- printf "%s-conn" (include "commentarr.fullname" .) -}}
-{{- end -}}
-{{- end }}

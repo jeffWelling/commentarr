@@ -54,11 +54,10 @@ helm upgrade --install commentarr ./deploy/helm/commentarr \
 
 See [`CONFIGURATION.md`](CONFIGURATION.md) for the full value reference.
 
-> **Note:** In this release, Helm-managed secrets only cover the admin
-> account. Service connections (Plex, Prowlarr, download client) are
-> configured through the UI/API after install. A future release will add
-> config-file bootstrap so connection settings can be declared alongside
-> the chart values.
+> **Note:** The Helm chart only bootstraps the admin account and
+> process-level settings. Service connections (Plex, Prowlarr, download
+> client) are configured through the UI/API after install — that's by
+> design: adding a Prowlarr doesn't require a pod restart.
 
 ## Bare-metal install
 

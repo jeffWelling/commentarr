@@ -26,26 +26,23 @@ spec:
         - name: commentarr
           image: {{ include "commentarr.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["serve"]
+          args:
+            - serve
+            - -addr
+            - :7878
+            - -db
+            - /data/commentarr.db
+            - -migrations
+            - /migrations
+            {{- with .Values.localBypassCIDR }}
+            - -local-bypass-cidr
+            - {{ . | quote }}
+            {{- end }}
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 7878
               protocol: TCP
           env:
-            - name: COMMENTARR_DATA_DIR
-              value: /data
-            - name: COMMENTARR_LIBRARY_MODE
-              value: {{ .Values.library.mode | quote }}
-            - name: COMMENTARR_LIBRARY_ROOT
-              value: {{ .Values.library.rootPath | quote }}
-            - name: COMMENTARR_PLACEMENT_MODE
-              value: {{ .Values.placement.mode | quote }}
-            - name: COMMENTARR_PLACEMENT_SEPARATE_ROOT
-              value: {{ .Values.placement.separateLibraryRoot | quote }}
-            - name: COMMENTARR_TRASH_AUTOPURGE_DAYS
-              value: {{ .Values.trash.autoPurgeDays | quote }}
-            - name: COMMENTARR_TRASH_ENABLED
-              value: {{ .Values.trash.enabled | quote }}
             - name: COMMENTARR_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -56,46 +53,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "commentarr.authSecretName" . }}
                   key: admin-password
-            - name: COMMENTARR_PLEX_BASE_URL
-              value: {{ .Values.connections.plex.baseURL | quote }}
-            - name: COMMENTARR_PLEX_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "commentarr.connectionsSecretName" . }}
-                  key: plex-token
-                  optional: true
-            - name: COMMENTARR_JELLYFIN_BASE_URL
-              value: {{ .Values.connections.jellyfin.baseURL | quote }}
-            - name: COMMENTARR_JELLYFIN_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "commentarr.connectionsSecretName" . }}
-                  key: jellyfin-api-key
-                  optional: true
-            - name: COMMENTARR_PROWLARR_BASE_URL
-              value: {{ .Values.connections.prowlarr.baseURL | quote }}
-            - name: COMMENTARR_PROWLARR_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "commentarr.connectionsSecretName" . }}
-                  key: prowlarr-api-key
-                  optional: true
-            - name: COMMENTARR_DOWNLOAD_CLIENT_TYPE
-              value: {{ .Values.connections.downloadClient.type | quote }}
-            - name: COMMENTARR_DOWNLOAD_CLIENT_BASE_URL
-              value: {{ .Values.connections.downloadClient.baseURL | quote }}
-            - name: COMMENTARR_DOWNLOAD_CLIENT_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "commentarr.connectionsSecretName" . }}
-                  key: download-client-username
-                  optional: true
-            - name: COMMENTARR_DOWNLOAD_CLIENT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "commentarr.connectionsSecretName" . }}
-                  key: download-client-password
-                  optional: true
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

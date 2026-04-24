@@ -114,15 +114,18 @@ are versioned — future payload changes will bump a `v` field inside
 
 ## Helm values (summary)
 
-The Helm chart exposes a subset of runtime configuration as day-one
-bootstrap values for convenience. See
+The Helm chart covers process-level concerns only: admin bootstrap,
+listen address, CIDR bypass, persistence, and deployment plumbing.
+Service connections (Plex / Jellyfin / Prowlarr / download clients)
+are deliberately **not** in values.yaml — they're configured at runtime
+through the API. See
 [`deploy/helm/commentarr/values.yaml`](../deploy/helm/commentarr/values.yaml)
 for the full set; key groups:
 
-- `auth.*` — admin username/password (or `existingSecret`).
-- `library.*` — default library mode and filesystem root.
-- `placement.*` — placement mode and separate-library root.
-- `trash.*` — auto-purge policy.
+- `auth.*` — admin username/password (or `existingSecret`). Provisions
+  the admin row on first startup via `COMMENTARR_ADMIN_USERNAME` +
+  `COMMENTARR_ADMIN_PASSWORD`.
+- `localBypassCIDR` — a single CIDR that bypasses API-key auth.
 - `persistence.*` — data PVC size and storage class.
 - `mediaLibrary.*` — how the media mount is sourced (emptyDir / PVC / hostPath).
 - `ingress.*` — optional Ingress with annotation pluggability.
