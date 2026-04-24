@@ -57,7 +57,10 @@ func serveCmd(args []string) error {
 	})
 
 	mountAPIV1(server, authMW, d, broker)
-	server.Mount("/", spaHandler())
+	// Serve the embedded React SPA at "/" — the FS falls back to
+	// index.html for unknown paths so client-side routing works on
+	// hard refresh.
+	server.Router().Handle("/*", embeddedSPAHandler())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -129,12 +132,6 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 	s.Mount("/api/v1/webhooks", authMW(v1.NewWebhooksHandler(webhookRepo, dispatcher)))
 
 	s.Router().Mount("/api/v1/events", authMW(sse.NewHandler(broker)))
-}
-
-func spaHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "web UI not built — run `cd web && npm run build`", http.StatusNotImplemented)
-	})
 }
 
 func splitCIDRs(s string) []string {

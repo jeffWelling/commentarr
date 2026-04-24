@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&family=JetBrains+Mono:wght@400;600&display=swap');
+@import 'tailwindcss';
+
+/*
+  Typography: deliberate choice per CLAUDE.md.
+  Body: Fraunces — a warm, slightly flared serif that reads like a
+    script supervisor's notebook. Pairs beautifully with commentary-
+    track subject matter (film + director's audio + behind-the-scenes).
+  Mono: JetBrains Mono for release titles + CEL expressions.
+*/
+
+:root {
+  /* Dark ambient — not generic black. Warm umber → plum gradient. */
+  --bg-0: #1a1410;
+  --bg-1: #231a1c;
+  --bg-2: #2d232a;
+  --fg-0: #f4ede1;
+  --fg-1: #c9bca8;
+  --fg-2: #8a7c69;
+  --accent: #d97a3d;
+  --accent-dim: #7d4825;
+  --success: #8bb87f;
+  --warn: #e6b85a;
+  --error: #c75c5c;
+
+  --font-body: 'Fraunces', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(ellipse at top left, var(--bg-1) 0%, var(--bg-0) 45%, #0e0a08 100%);
+  color: var(--fg-0);
+  font-family: var(--font-body);
+  font-feature-settings: 'ss01', 'ss02';
+  min-height: 100vh;
+}
+
+code, pre, .mono { font-family: var(--font-mono); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-0); }
+::-webkit-scrollbar-thumb { background: var(--bg-2); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-page { animation: fadeInUp 220ms ease-out both; }
