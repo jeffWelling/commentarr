@@ -3,5 +3,10 @@
 /commentarr.db*
 /.git
 /node_modules
+/web/node_modules
+/web/dist
 *.test
 *.out
+.DS_Store
+.idea/
+.vscode/

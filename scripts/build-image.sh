@@ -10,15 +10,24 @@
 # both commentarr/ and commentary-classifier/ as siblings, then runs the
 # build from there. Once the classifier ships a tagged release we swap
 # the replace for a version pin and can drop this script.
+#
+# Multi-arch: pass BUILD_PLATFORMS=linux/amd64,linux/arm64 (default is
+# the host's native platform) and BUILDER=podman or docker. buildx is
+# required for cross-platform builds; podman manages that transparently
+# via QEMU emulation.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIBLING="$(cd "$REPO_ROOT/../commentary-classifier" && pwd)"
-TAG="${IMAGE_TAG:-commentarr:plan1-dev}"
+TAG="${IMAGE_TAG:-commentarr:dev}"
+BUILDER="${BUILDER:-podman}"
+PLATFORMS="${BUILD_PLATFORMS:-}"
 
 echo "commentarr repo:       $REPO_ROOT"
 echo "classifier sibling:    $SIBLING"
 echo "image tag:             $TAG"
+echo "builder:               $BUILDER"
+echo "platforms:             ${PLATFORMS:-<native>}"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -26,6 +35,7 @@ trap 'rm -rf "$TMP"' EXIT
 # rsync preserves permissions and excludes VCS / build artifacts
 rsync -a --exclude '.git' --exclude 'vendor' --exclude 'bin' \
       --exclude '*.test' --exclude '/commentarr' \
+      --exclude 'node_modules' --exclude 'web/dist' \
       "$REPO_ROOT/" "$TMP/commentarr/"
 rsync -a --exclude '.git' --exclude 'vendor' --exclude 'bin' \
       --exclude '*.test' \
@@ -33,6 +43,11 @@ rsync -a --exclude '.git' --exclude 'vendor' --exclude 'bin' \
 
 echo
 echo "building from: $TMP"
-podman build -t "$TAG" -f "$TMP/commentarr/Dockerfile" "$TMP"
+if [[ -n "$PLATFORMS" ]]; then
+  "$BUILDER" build --platform "$PLATFORMS" -t "$TAG" \
+    -f "$TMP/commentarr/Dockerfile" "$TMP"
+else
+  "$BUILDER" build -t "$TAG" -f "$TMP/commentarr/Dockerfile" "$TMP"
+fi
 echo
 echo "built: $TAG"
