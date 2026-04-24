@@ -1,0 +1,26 @@
+Commentarr has been deployed.
+
+1. Wait for the pod to become ready:
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "commentarr.fullname" . }}
+
+2. Reach the UI:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+   http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ (first .paths).path }}
+{{- end }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+   Watch for an external IP:
+     kubectl -n {{ .Release.Namespace }} get svc {{ include "commentarr.fullname" . }} -w
+{{- else }}
+   Port-forward:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "commentarr.fullname" . }} 8080:{{ .Values.service.port }}
+   Then open http://localhost:8080
+{{- end }}
+
+3. Log in with the admin credentials you supplied in values.yaml
+   (or the existingSecret referenced in auth.existingSecret).
+
+4. Mint an API key via the UI (Settings → API Keys) and store it safely —
+   it's only shown once.
+
+Docs: https://github.com/jeffWelling/commentarr/tree/main/docs

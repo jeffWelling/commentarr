@@ -5,8 +5,7 @@
 /coverage.*
 # The compiled binary (go build drops it wherever cwd was)
 /commentarr
-/**/commentarr
-!/cmd/commentarr/
+/cmd/commentarr/commentarr
 
 # Local dev artifacts
 /commentarr.db

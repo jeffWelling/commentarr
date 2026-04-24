@@ -1,0 +1,18 @@
+apiVersion: v2
+name: commentarr
+description: Commentarr — automated finder for commentary-bearing releases of movies and TV you already own.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/jeffWelling/commentarr
+sources:
+  - https://github.com/jeffWelling/commentarr
+keywords:
+  - arr
+  - commentary
+  - plex
+  - jellyfin
+  - media
+maintainers:
+  - name: Jeff Welling
+    url: https://github.com/jeffWelling

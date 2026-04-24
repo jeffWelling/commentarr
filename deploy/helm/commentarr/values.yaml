@@ -1,0 +1,140 @@
+# Default values for Commentarr.
+# This chart deploys a single-replica stateful service with a persistent
+# volume for the SQLite database. Commentarr is designed to run as one
+# process — don't scale the replica count.
+
+image:
+  repository: ghcr.io/jeffwelling/commentarr
+  tag: ""  # defaults to .Chart.AppVersion if empty
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Admin credentials. Either set inline (dev/test only) or reference an
+# existing secret with keys: admin-username, admin-password.
+auth:
+  # Create a new secret from these values. Only set one of {auth.secret,
+  # auth.existingSecret} — existingSecret wins if both are set.
+  adminUsername: "admin"
+  adminPassword: ""  # generate one and paste here, or use existingSecret
+  existingSecret: ""
+
+# Connections to media servers and download clients. Each entry becomes
+# an env var on the pod. Keep passwords in existingConnectionsSecret.
+connections:
+  plex:
+    baseURL: ""
+    token: ""  # prefer existingConnectionsSecret
+  jellyfin:
+    baseURL: ""
+    apiKey: ""
+  prowlarr:
+    baseURL: ""
+    apiKey: ""
+  downloadClient:
+    # one of: qbittorrent, transmission, deluge, rtorrent
+    type: "qbittorrent"
+    baseURL: ""
+    username: ""
+    password: ""
+  existingConnectionsSecret: ""  # if set, all secret fields above are ignored
+
+# Library scan mode: filesystem | plex | jellyfin | emby
+library:
+  mode: "filesystem"
+  rootPath: "/media"  # for filesystem mode
+
+# Placement mode: replace | sidecar | separate-library
+placement:
+  mode: "sidecar"
+  separateLibraryRoot: "/media-commentary"
+
+# Safety rules. Paste CEL expressions here; they are loaded at startup.
+# See docs/SAFETY_RULES_REFERENCE.md for the fact schema.
+safety:
+  rules: []
+    # - name: "reject-low-confidence"
+    #   expr: "classifier_confidence < 0.7"
+    #   action: "reject"
+
+# Trash policy
+trash:
+  autoPurgeDays: 28
+  enabled: true
+
+# Metrics
+metrics:
+  enabled: true
+  # If you deploy kube-prometheus-stack, this creates a ServiceMonitor.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    namespace: ""  # same as release by default
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt
+    # nginx.ingress.kubernetes.io/proxy-body-size: "0"
+  hosts:
+    - host: commentarr.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: commentarr-tls
+    #   hosts:
+    #     - commentarr.local
+
+persistence:
+  enabled: true
+  storageClass: ""  # "" picks cluster default
+  accessMode: ReadWriteOnce
+  size: 2Gi
+  # Mount path is fixed to /data; the SQLite DB lives at /data/commentarr.db.
+
+# Volume mount for your existing media library. Defaults to an emptyDir
+# — override with a PVC or hostPath. Using ReadWriteMany is recommended
+# if multiple services share this volume.
+mediaLibrary:
+  enabled: true
+  # One of: pvc, hostPath, emptyDir
+  type: emptyDir
+  # when type=pvc
+  existingClaim: ""
+  # when type=hostPath
+  hostPath: ""
+  mountPath: /media
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# Pod-level settings
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra env vars (passed verbatim into the pod)
+extraEnv: []
+  # - name: COMMENTARR_LOG_LEVEL
+  #   value: "debug"
