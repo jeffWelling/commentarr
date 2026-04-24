@@ -46,6 +46,9 @@ func serveCmd(args []string) error {
 	}
 
 	authRepo := auth.NewRepo(d)
+	if err := bootstrapAdmin(authRepo); err != nil {
+		return err
+	}
 	if err := bootstrapAPIKey(authRepo, *initialKeyLabel); err != nil {
 		return err
 	}
@@ -92,6 +95,30 @@ func serveCmd(args []string) error {
 		}
 		return err
 	}
+}
+
+// bootstrapAdmin upserts the single admin account from the
+// COMMENTARR_ADMIN_USERNAME / COMMENTARR_ADMIN_PASSWORD env vars. Both
+// must be set or the call is a no-op — a missing admin is fine; the UI
+// can guide the operator through creating one, and API clients use
+// API keys regardless.
+//
+// This is idempotent: restarting the pod with the same values just
+// re-hashes and re-stores the password, which is cheap.
+func bootstrapAdmin(repo *auth.Repo) error {
+	user := os.Getenv("COMMENTARR_ADMIN_USERNAME")
+	pass := os.Getenv("COMMENTARR_ADMIN_PASSWORD")
+	if user == "" || pass == "" {
+		return nil
+	}
+	hash, err := auth.HashPassword(pass)
+	if err != nil {
+		return fmt.Errorf("hash admin password: %w", err)
+	}
+	if err := repo.SaveAdmin(context.Background(), user, hash); err != nil {
+		return fmt.Errorf("save admin: %w", err)
+	}
+	return nil
 }
 
 // bootstrapAPIKey mints the first API key on fresh installs and prints
