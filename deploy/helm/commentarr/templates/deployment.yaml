@@ -58,6 +58,20 @@ spec:
             - -qbit-name
             - {{ $.Values.connections.qbittorrent.name | default "qbittorrent" | quote }}
             {{- end }}
+            {{- if .Values.connections.qbittorrent.credsExistingSecret }}
+            - -qbit-username
+            - $(COMMENTARR_QBIT_USERNAME)
+            - -qbit-password
+            - $(COMMENTARR_QBIT_PASSWORD)
+            {{- end }}
+            {{- with .Values.watcher.interval }}
+            - -watch-interval
+            - {{ . | quote }}
+            {{- end }}
+            {{- with .Values.watcher.category }}
+            - -watch-category
+            - {{ . | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 7878
@@ -79,6 +93,18 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.connections.prowlarr.apiKeyExistingSecret }}
                   key: {{ .Values.connections.prowlarr.apiKeySecretKey | default "api-key" }}
+            {{- end }}
+            {{- if .Values.connections.qbittorrent.credsExistingSecret }}
+            - name: COMMENTARR_QBIT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.connections.qbittorrent.credsExistingSecret }}
+                  key: {{ .Values.connections.qbittorrent.usernameSecretKey | default "username" }}
+            - name: COMMENTARR_QBIT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.connections.qbittorrent.credsExistingSecret }}
+                  key: {{ .Values.connections.qbittorrent.passwordSecretKey | default "password" }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

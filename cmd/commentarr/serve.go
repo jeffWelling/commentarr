@@ -16,6 +16,7 @@ import (
 	"github.com/jeffWelling/commentarr/internal/auth"
 	"github.com/jeffWelling/commentarr/internal/daemon"
 	"github.com/jeffWelling/commentarr/internal/db"
+	"github.com/jeffWelling/commentarr/internal/download"
 	"github.com/jeffWelling/commentarr/internal/httpserver"
 	"github.com/jeffWelling/commentarr/internal/indexer"
 	"github.com/jeffWelling/commentarr/internal/queue"
@@ -43,7 +44,11 @@ func serveCmd(args []string) error {
 	searchInterval := fset.Duration("search-interval", 15*time.Minute, "how often the in-process search loop fires (0 disables)")
 	scoreThreshold := fset.Int("score-threshold", 8, "release-score threshold for likely-commentary flag")
 	qbitURL := fset.String("qbit-url", "", "qBittorrent base URL (optional; shows up in the UI when set)")
+	qbitUsername := fset.String("qbit-username", "", "qBittorrent Web UI username (required to actually run the watcher)")
+	qbitPassword := fset.String("qbit-password", "", "qBittorrent Web UI password")
 	qbitName := fset.String("qbit-name", "qbittorrent", "qBittorrent instance label")
+	watchInterval := fset.Duration("watch-interval", 30*time.Second, "how often the in-process watcher polls download clients (0 disables)")
+	watchCategory := fset.String("watch-category", "commentarr", "category/label the watcher monitors")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -97,6 +102,15 @@ func serveCmd(args []string) error {
 	}
 	dmn := daemon.New(daemon.Config{Ticks: ticks})
 	go dmn.Run(ctx)
+
+	// Watcher runs its own ticker (it's stateful — dedupes seen jobs),
+	// so it lives outside the daemon's Tick set.
+	if w, events, ok := buildWatcher(*qbitURL, *qbitUsername, *qbitPassword, *qbitName,
+		*watchCategory, *watchInterval); ok {
+		go w.Run(ctx, events)
+		go logWatcherEvents(ctx, events)
+		fmt.Printf("watcher enabled: qbit=%q, category=%q, interval=%s\n", *qbitName, *watchCategory, *watchInterval)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -231,6 +245,48 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 			}
 		},
 	}, true
+}
+
+// buildWatcher assembles a download.Watcher around a configured qBit
+// instance. Returns ok=false when qBit isn't configured (URL empty),
+// when the watcher is disabled (interval<=0), or when credentials
+// aren't supplied (the qBit API rejects everything without a session).
+//
+// Returns the watcher and a buffered event channel the caller is
+// expected to consume. When the next iteration lands the auto-import
+// chain, that consumer becomes the importer route.
+func buildWatcher(url, username, password, name, category string, interval time.Duration) (*download.Watcher, chan download.Event, bool) {
+	if url == "" || username == "" || password == "" || interval <= 0 {
+		return nil, nil, false
+	}
+	client := download.NewQBittorrent(download.QBittorrentConfig{
+		BaseURL: url, Username: username, Password: password, Name: name,
+	})
+	w := download.NewWatcher([]download.DownloadClient{client}, category, interval)
+	// Buffer = 64 lets a brief consumer hiccup absorb several poll cycles
+	// without blocking the watcher goroutine. Watcher uses a select on
+	// ctx.Done() in its sender, so a stuck consumer eventually unblocks
+	// at shutdown.
+	events := make(chan download.Event, 64)
+	return w, events, true
+}
+
+// logWatcherEvents drains the watcher's event channel until ctx is
+// cancelled, logging completions + errors. This is the placeholder
+// consumer; the next iteration replaces it with the importer routing.
+func logWatcherEvents(ctx context.Context, events <-chan download.Event) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e, ok := <-events:
+			if !ok {
+				return
+			}
+			log.Printf("download %s: client=%s job=%s name=%q",
+				e.Kind, e.Client, e.Status.ClientJobID, e.Status.Name)
+		}
+	}
 }
 
 // infoFromProwlarr builds an IndexerInfo slice for a configured Prowlarr

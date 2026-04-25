@@ -43,12 +43,24 @@ connections:
   qbittorrent:
     baseURL: ""
     name: qbittorrent
+    # Reference an existing secret holding qBit Web UI credentials —
+    # required to actually run the watcher. Default secret keys are
+    # "username" + "password"; override via the *SecretKey fields.
+    credsExistingSecret: ""
+    usernameSecretKey: username
+    passwordSecretKey: password
 
 # Search loop. Set search.interval=0 (or leave Prowlarr unconfigured) to
 # disable the in-process search loop and run `commentarr search` from
 # cron instead.
 search:
   interval: 15m
+
+# Watcher loop. Set watcher.interval=0 (or leave qBit credentials
+# unset) to disable the in-process watcher.
+watcher:
+  interval: 30s
+  category: commentarr
 
 service:
   type: ClusterIP

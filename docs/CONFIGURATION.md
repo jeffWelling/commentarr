@@ -29,7 +29,11 @@ commentarr serve
   -search-interval   in-process search-loop period  default 15m  (0 disables)
   -score-threshold   likely-commentary score gate   default 8
   -qbit-url          qBittorrent base URL           default ""  (no card shown)
+  -qbit-username     qBittorrent Web UI username    default ""  (watcher disabled without it)
+  -qbit-password     qBittorrent Web UI password    default ""
   -qbit-name         qBittorrent instance label     default "qbittorrent"
+  -watch-interval    in-process watcher poll period default 30s  (0 disables)
+  -watch-category    category/label to watch        default "commentarr"
 ```
 
 Setting `-prowlarr-url` + `-prowlarr-api-key` enables the in-process
@@ -38,8 +42,11 @@ for titles whose `next_search_at` has elapsed, queries Prowlarr, and
 persists candidates. Empty URL or empty key keeps the loop disabled —
 fall back to `commentarr search` from cron in that case.
 
-The qBit watcher and the auto-pick→auto-download chain ship in the next
-two iterations; for now the daemon stops at "candidates persisted."
+Setting `-qbit-url` + `-qbit-username` + `-qbit-password` enables the
+in-process watcher. Every `-watch-interval` it polls qBit for jobs
+tagged with `-watch-category` (default `commentarr`) and emits one
+event per `completed` or `error`. Today those events are logged; the
+auto-pick→auto-download→auto-import chain lands in the next iteration.
 
 Notes:
 

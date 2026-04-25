@@ -149,6 +149,41 @@ func TestBuildSearchTick_DisabledWhenProwlarrUnconfigured(t *testing.T) {
 	}
 }
 
+func TestBuildWatcher_DisabledWhenQbitUnconfigured(t *testing.T) {
+	cases := []struct {
+		name                       string
+		url, username, password    string
+		interval                   time.Duration
+	}{
+		{"no url", "", "u", "p", time.Second},
+		{"no user", "http://qbit", "", "p", time.Second},
+		{"no pass", "http://qbit", "u", "", time.Second},
+		{"interval zero", "http://qbit", "u", "p", 0},
+		{"interval negative", "http://qbit", "u", "p", -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w, ev, ok := buildWatcher(tc.url, tc.username, tc.password, "qbit", "commentarr", tc.interval)
+			if ok || w != nil || ev != nil {
+				t.Fatalf("expected disabled, got w=%v ev=%v ok=%v", w, ev, ok)
+			}
+		})
+	}
+}
+
+func TestBuildWatcher_EnabledWhenQbitConfigured(t *testing.T) {
+	w, ev, ok := buildWatcher("http://qbit.test", "user", "pass", "qbit", "commentarr", 30*time.Second)
+	if !ok {
+		t.Fatal("expected enabled")
+	}
+	if w == nil || ev == nil {
+		t.Fatalf("expected non-nil watcher + chan, got w=%v ev=%v", w, ev)
+	}
+	if cap(ev) < 16 {
+		t.Errorf("event channel buffer too small: %d", cap(ev))
+	}
+}
+
 func TestBuildSearchTick_EnabledWhenProwlarrConfigured(t *testing.T) {
 	d := newTestDB(t)
 	tick, ok := buildSearchTick(d, "http://prowlarr.test", "abc", "main", 6, 3, 8, time.Minute)
