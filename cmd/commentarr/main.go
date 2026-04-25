@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/jeffWelling/commentarr/internal/classify"
@@ -39,9 +40,32 @@ func main() {
 		must(importCmd(os.Args[2:]))
 	case "serve":
 		must(serveCmd(os.Args[2:]))
+	case "version", "-v", "--version":
+		printVersion()
 	default:
 		usage()
 		os.Exit(2)
+	}
+}
+
+// version is overridden at link time via -ldflags '-X main.version=...'.
+// "dev" is the in-tree default — release builds set the tag explicitly.
+var version = "dev"
+
+func printVersion() {
+	fmt.Printf("commentarr %s\n", version)
+	if info, ok := debug.ReadBuildInfo(); ok {
+		fmt.Printf("  go: %s\n", info.GoVersion)
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				fmt.Printf("  commit: %s\n", s.Value)
+			case "vcs.time":
+				fmt.Printf("  built: %s\n", s.Value)
+			case "GOOS", "GOARCH":
+				fmt.Printf("  %s: %s\n", s.Key, s.Value)
+			}
+		}
 	}
 }
 
@@ -53,10 +77,11 @@ func must(err error) {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
-  commentarr scan   -root <path>   -db <file>
-  commentarr search -prowlarr-url <url> -prowlarr-api-key <key> -db <file>
-  commentarr import -new-file <path> -original <path> -title-id <id> -title <name> [-mode sidecar|replace|separate-library]
-  commentarr serve  -addr :7878 -db commentarr.db [-local-bypass-cidr 127.0.0.0/8]`)
+  commentarr scan    -root <path>   -db <file>
+  commentarr search  -prowlarr-url <url> -prowlarr-api-key <key> -db <file>
+  commentarr import  -new-file <path> -original <path> -title-id <id> -title <name> [-mode sidecar|replace|separate-library]
+  commentarr serve   -addr :7878 -db commentarr.db [-local-bypass-cidr 127.0.0.0/8]
+  commentarr version`)
 }
 
 func scan(args []string) error {
