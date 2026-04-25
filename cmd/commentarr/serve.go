@@ -98,6 +98,7 @@ func serveCmd(args []string) error {
 	mountAPIV1(server, authMW, d, broker, serveConnections{
 		indexers:        infoFromProwlarr(*prowlarrURL, *prowlarrName),
 		downloadClients: infoFromQbit(*qbitURL, *qbitName),
+		startedAt:       time.Now().UTC(),
 	})
 	// Serve the embedded React SPA at "/" — the FS falls back to
 	// index.html for unknown paths so client-side routing works on
@@ -245,10 +246,12 @@ func bootstrapAPIKey(repo *auth.Repo, label string) error {
 // we currently surface read-only in the API. A future iteration will
 // replace these with a DB-backed registry that the UI can edit at
 // runtime; for now they're populated from flags so an operator can see
-// what the daemon was started with.
+// what the daemon was started with. startedAt powers /api/v1/system's
+// uptime — captured once at startup, not per request.
 type serveConnections struct {
 	indexers        []v1.IndexerInfo
 	downloadClients []v1.DownloadClientInfo
+	startedAt       time.Time
 }
 
 func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d *sql.DB, broker *sse.Broker, conn serveConnections) {
@@ -268,6 +271,7 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 	s.Mount("/api/v1/trash", authMW(v1.NewTrashHandler(trashRepo)))
 	s.Mount("/api/v1/safety", authMW(v1.NewSafetyHandler(safetyRepo)))
 	s.Mount("/api/v1/webhooks", authMW(v1.NewWebhooksHandler(webhookRepo, dispatcher)))
+	s.Mount("/api/v1/system", authMW(v1.NewSystemHandler(version, conn.startedAt)))
 
 	s.Router().Mount("/api/v1/events", authMW(sse.NewHandler(broker)))
 }

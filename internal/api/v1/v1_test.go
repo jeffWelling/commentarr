@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jeffWelling/commentarr/internal/db"
 	"github.com/jeffWelling/commentarr/internal/download"
@@ -85,6 +86,24 @@ func TestWanted_GETReturnsOnlyWanted(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	if len(out.Wanted) != 1 || out.Wanted[0].TitleID != "a" {
 		t.Fatalf("unexpected wanted: %+v", out.Wanted)
+	}
+}
+
+func TestSystem_GETReturnsVersionAndUptime(t *testing.T) {
+	startedAt := time.Now().Add(-2 * time.Second)
+	h := NewSystemHandler("v0.test", startedAt)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"version":"v0.test"`) {
+		t.Fatalf("response missing version: %s", body)
+	}
+	if !strings.Contains(body, `"uptime_secs"`) {
+		t.Fatalf("response missing uptime: %s", body)
 	}
 }
 

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { api } from './api/client'
 import { Login } from './pages/Login'
 import { Dashboard } from './pages/Dashboard'
 import { Wanted } from './pages/Wanted'
@@ -21,6 +22,53 @@ function RequireAuth({ children }: { children: ReactNode }) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
   return <>{children}</>
+}
+
+type SystemInfo = {
+  version: string
+  commit?: string
+  built_at?: string
+  go_version?: string
+  goos?: string
+  goarch?: string
+  started_at: string
+  uptime_secs: number
+}
+
+function formatUptime(secs: number): string {
+  if (secs < 60) return `${Math.round(secs)}s`
+  const m = Math.floor(secs / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ${m % 60}m`
+  const d = Math.floor(h / 24)
+  return `${d}d ${h % 24}h`
+}
+
+function SystemChip() {
+  const q = useQuery<SystemInfo>({
+    queryKey: ['system'],
+    queryFn: () => api.get('/api/v1/system/'),
+    refetchInterval: 30_000,
+    enabled: !!getAPIKey(),
+  })
+  if (!q.data) return null
+  const short = q.data.commit?.slice(0, 7) ?? ''
+  return (
+    <span
+      className="mono text-xs text-[color:var(--fg-2)]"
+      title={[
+        `started: ${q.data.started_at}`,
+        q.data.commit ? `commit: ${q.data.commit}` : '',
+        q.data.go_version ? `go: ${q.data.go_version}` : '',
+        q.data.goos && q.data.goarch ? `${q.data.goos}/${q.data.goarch}` : '',
+      ].filter(Boolean).join('\n')}
+    >
+      {q.data.version}
+      {short && <span className="opacity-60"> · {short}</span>}
+      <span className="opacity-60"> · up {formatUptime(q.data.uptime_secs)}</span>
+    </span>
+  )
 }
 
 function NavBar() {
@@ -58,6 +106,7 @@ function NavBar() {
           </li>
         ))}
       </ul>
+      <SystemChip />
       <button
         onClick={() => {
           clearAPIKey()
