@@ -90,20 +90,10 @@ func (p *Picker) PickAndQueueOne(ctx context.Context, titleID string) (string, b
 }
 
 // hasInflightJob returns true when at least one non-errored job already
-// covers titleID.
+// covers titleID. Backed by JobRepo.HasInflightForTitle so this is one
+// indexed query, not an N×status scan.
 func (p *Picker) hasInflightJob(ctx context.Context, titleID string) (bool, error) {
-	for _, status := range []string{"queued", "completed", "imported"} {
-		jobs, err := p.jobs.ListByStatus(ctx, status)
-		if err != nil {
-			return false, err
-		}
-		for _, j := range jobs {
-			if j.TitleID == titleID {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+	return p.jobs.HasInflightForTitle(ctx, titleID)
 }
 
 // selectBest picks the highest-scoring likely-commentary candidate at

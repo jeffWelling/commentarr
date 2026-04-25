@@ -104,6 +104,45 @@ func TestJobRepo_ListByStatus(t *testing.T) {
 	}
 }
 
+func TestJobRepo_HasInflightForTitle(t *testing.T) {
+	repo := newTestJobRepo(t)
+	ctx := context.Background()
+
+	// no jobs → false
+	got, err := repo.HasInflightForTitle(ctx, "tt-1")
+	if err != nil || got {
+		t.Fatalf("empty: got=%v err=%v", got, err)
+	}
+
+	// queued job → true
+	id, _ := repo.Save(ctx, Job{ClientName: "qbit", ClientJobID: "a", TitleID: "tt-1"})
+	got, _ = repo.HasInflightForTitle(ctx, "tt-1")
+	if !got {
+		t.Fatal("queued job should count as inflight")
+	}
+
+	// errored only → false (allows retry)
+	_ = repo.MarkStatus(ctx, id, "error", "stalled")
+	got, _ = repo.HasInflightForTitle(ctx, "tt-1")
+	if got {
+		t.Fatal("errored job should not block")
+	}
+
+	// completed → true (counts as inflight; importer hasn't finished yet)
+	id2, _ := repo.Save(ctx, Job{ClientName: "qbit", ClientJobID: "b", TitleID: "tt-1"})
+	_ = repo.MarkStatus(ctx, id2, "completed", "")
+	got, _ = repo.HasInflightForTitle(ctx, "tt-1")
+	if !got {
+		t.Fatal("completed should count as inflight")
+	}
+
+	// other titles aren't affected
+	got, _ = repo.HasInflightForTitle(ctx, "tt-other")
+	if got {
+		t.Fatal("title isolation broken")
+	}
+}
+
 func TestJobRepo_ListRecentReturnsNewestFirst(t *testing.T) {
 	repo := newTestJobRepo(t)
 	for _, jid := range []string{"first", "second", "third"} {

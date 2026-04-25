@@ -104,6 +104,25 @@ func (r *JobRepo) ListByStatus(ctx context.Context, status string) ([]Job, error
 	return out, rows.Err()
 }
 
+// HasInflightForTitle returns true when at least one non-errored job
+// (status in queued | completed | imported) covers the given title.
+// This is the picker's gate: a true result means "don't queue another
+// download — we're already on it."
+//
+// Fewer round-trips and table scans than calling ListByStatus N times
+// just to filter by title_id.
+func (r *JobRepo) HasInflightForTitle(ctx context.Context, titleID string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM download_jobs
+		WHERE title_id = ? AND status IN ('queued','completed','imported')`,
+		titleID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("inflight count %s: %w", titleID, err)
+	}
+	return n > 0, nil
+}
+
 // ListRecent returns jobs newest-first, capped at limit. Useful for
 // the UI's downloads page where we want a flat activity stream.
 // Pass limit<=0 to get a sane default (50).
