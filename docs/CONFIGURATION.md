@@ -22,16 +22,24 @@ commentarr serve
   -local-bypass-cidr CIDR that bypasses auth        default ""  (disabled)
   -initial-key-label label for the first API key    default "default"
   -prowlarr-url      Prowlarr base URL              default ""  (no card shown)
+  -prowlarr-api-key  Prowlarr API key               default ""  (search loop disabled without it)
   -prowlarr-name     Prowlarr instance label        default "prowlarr"
+  -prowlarr-rpm      Prowlarr requests-per-minute   default 6
+  -prowlarr-burst    Prowlarr token-bucket burst    default 3
+  -search-interval   in-process search-loop period  default 15m  (0 disables)
+  -score-threshold   likely-commentary score gate   default 8
   -qbit-url          qBittorrent base URL           default ""  (no card shown)
   -qbit-name         qBittorrent instance label     default "qbittorrent"
 ```
 
-The `-prowlarr-url` / `-qbit-url` flags surface the configured instances
-in the UI (via `/api/v1/indexers` and `/api/v1/download-clients`). They
-do **not** yet wire those instances into the search / download pipeline
-run by `serve` — run `commentarr search` / `commentarr import` as
-cron jobs for the pipeline itself until the in-process daemon lands.
+Setting `-prowlarr-url` + `-prowlarr-api-key` enables the in-process
+search loop: every `-search-interval` the daemon walks the wanted queue
+for titles whose `next_search_at` has elapsed, queries Prowlarr, and
+persists candidates. Empty URL or empty key keeps the loop disabled —
+fall back to `commentarr search` from cron in that case.
+
+The qBit watcher and the auto-pick→auto-download chain ship in the next
+two iterations; for now the daemon stops at "candidates persisted."
 
 Notes:
 

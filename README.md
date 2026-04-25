@@ -31,10 +31,10 @@ SPA embedded via `go:embed`, Helm chart, multi-arch Dockerfile.
 Classifier benchmark on 139 titles: precision 0.98, recall 1.00,
 F1 0.99.
 
-The in-process daemon currently runs only the trash-purge tick; search
-and download-watcher loops still run via the `search` / `import`
-subcommands (typically from cron). An in-process daemon landing is the
-next planned advance.
+The in-process daemon runs the trash-purge tick and the search loop
+(when `-prowlarr-url` + `-prowlarr-api-key` are set). The download
+watcher and auto-pick→auto-download chain ship next; until then,
+`commentarr import` runs the post-download pipeline from cron.
 
 ## Build
 

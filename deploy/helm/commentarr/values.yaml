@@ -35,9 +35,20 @@ connections:
   prowlarr:
     baseURL: ""
     name: prowlarr
+    # Reference an existing secret holding the Prowlarr API key — required
+    # to actually run searches (just the baseURL only surfaces the card).
+    # Default secret key is "api-key"; override with apiKeySecretKey.
+    apiKeyExistingSecret: ""
+    apiKeySecretKey: api-key
   qbittorrent:
     baseURL: ""
     name: qbittorrent
+
+# Search loop. Set search.interval=0 (or leave Prowlarr unconfigured) to
+# disable the in-process search loop and run `commentarr search` from
+# cron instead.
+search:
+  interval: 15m
 
 service:
   type: ClusterIP

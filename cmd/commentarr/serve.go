@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,12 +17,14 @@ import (
 	"github.com/jeffWelling/commentarr/internal/daemon"
 	"github.com/jeffWelling/commentarr/internal/db"
 	"github.com/jeffWelling/commentarr/internal/httpserver"
+	"github.com/jeffWelling/commentarr/internal/indexer"
 	"github.com/jeffWelling/commentarr/internal/queue"
 	"github.com/jeffWelling/commentarr/internal/safety"
 	"github.com/jeffWelling/commentarr/internal/search"
 	"github.com/jeffWelling/commentarr/internal/sse"
 	"github.com/jeffWelling/commentarr/internal/title"
 	"github.com/jeffWelling/commentarr/internal/trash"
+	"github.com/jeffWelling/commentarr/internal/verify"
 	"github.com/jeffWelling/commentarr/internal/webhook"
 )
 
@@ -33,7 +36,12 @@ func serveCmd(args []string) error {
 	bypassCIDR := fset.String("local-bypass-cidr", "", "CIDR range that bypasses auth (e.g. 127.0.0.0/8)")
 	initialKeyLabel := fset.String("initial-key-label", "default", "label for the auto-generated first API key")
 	prowlarrURL := fset.String("prowlarr-url", "", "Prowlarr base URL (optional; shows up in the UI when set)")
+	prowlarrAPIKey := fset.String("prowlarr-api-key", "", "Prowlarr API key (required to actually run searches)")
 	prowlarrName := fset.String("prowlarr-name", "prowlarr", "Prowlarr instance label")
+	prowlarrRPM := fset.Int("prowlarr-rpm", 6, "Prowlarr requests-per-minute rate limit")
+	prowlarrBurst := fset.Int("prowlarr-burst", 3, "Prowlarr token-bucket burst")
+	searchInterval := fset.Duration("search-interval", 15*time.Minute, "how often the in-process search loop fires (0 disables)")
+	scoreThreshold := fset.Int("score-threshold", 8, "release-score threshold for likely-commentary flag")
 	qbitURL := fset.String("qbit-url", "", "qBittorrent base URL (optional; shows up in the UI when set)")
 	qbitName := fset.String("qbit-name", "qbittorrent", "qBittorrent instance label")
 	if err := fset.Parse(args); err != nil {
@@ -76,13 +84,18 @@ func serveCmd(args []string) error {
 	defer cancel()
 
 	trashSvc := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
-	dmn := daemon.New(daemon.Config{
-		Ticks: []daemon.Tick{
-			{Name: "trash-purge", Interval: time.Hour, Fn: func(c context.Context) {
-				_, _ = trashSvc.PurgeExpired(c)
-			}},
-		},
-	})
+
+	ticks := []daemon.Tick{
+		{Name: "trash-purge", Interval: time.Hour, Fn: func(c context.Context) {
+			_, _ = trashSvc.PurgeExpired(c)
+		}},
+	}
+	if tick, ok := buildSearchTick(d, *prowlarrURL, *prowlarrAPIKey, *prowlarrName,
+		*prowlarrRPM, *prowlarrBurst, *scoreThreshold, *searchInterval); ok {
+		ticks = append(ticks, tick)
+		fmt.Printf("search loop enabled: prowlarr=%q, interval=%s\n", *prowlarrName, *searchInterval)
+	}
+	dmn := daemon.New(daemon.Config{Ticks: ticks})
 	go dmn.Run(ctx)
 
 	sigCh := make(chan os.Signal, 1)
@@ -176,6 +189,48 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 	s.Mount("/api/v1/webhooks", authMW(v1.NewWebhooksHandler(webhookRepo, dispatcher)))
 
 	s.Router().Mount("/api/v1/events", authMW(sse.NewHandler(broker)))
+}
+
+// buildSearchTick assembles a Searcher around a configured Prowlarr
+// instance and wraps it as a daemon Tick. Returns ok=false when the
+// loop should not run — either Prowlarr isn't configured (URL or key
+// missing) or the operator disabled it via interval=0. Logging is
+// minimal because each individual indexer call already emits metrics +
+// circuit-breaker logs at its own layer.
+func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold int, interval time.Duration) (daemon.Tick, bool) {
+	if url == "" || apiKey == "" || interval <= 0 {
+		return daemon.Tick{}, false
+	}
+	rl := indexer.NewRateLimiter(indexer.RateLimitConfig{RequestsPerMinute: rpm, Burst: burst})
+	cb := indexer.NewCircuitBreaker(indexer.CircuitBreakerConfig{
+		ConsecutiveFailureThreshold: 5,
+		OpenDuration:                time.Hour,
+	})
+	idx := indexer.NewProwlarr(indexer.ProwlarrConfig{
+		BaseURL: url, APIKey: apiKey, Name: name,
+	}, rl, cb)
+	searcher := search.NewSearcher(
+		[]indexer.Indexer{idx},
+		verify.NewVerifier(verify.DefaultRules(), threshold),
+		search.NewRepo(d),
+		queue.New(d),
+		title.NewRepo(d),
+		100,
+	)
+	return daemon.Tick{
+		Name:     "search-due",
+		Interval: interval,
+		Fn: func(c context.Context) {
+			n, err := searcher.SearchDue(c, time.Now())
+			if err != nil {
+				log.Printf("search tick: %v", err)
+				return
+			}
+			if n > 0 {
+				log.Printf("search tick: processed %d titles", n)
+			}
+		},
+	}, true
 }
 
 // infoFromProwlarr builds an IndexerInfo slice for a configured Prowlarr

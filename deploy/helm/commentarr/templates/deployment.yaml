@@ -44,6 +44,14 @@ spec:
             - -prowlarr-name
             - {{ $.Values.connections.prowlarr.name | default "prowlarr" | quote }}
             {{- end }}
+            {{- if .Values.connections.prowlarr.apiKeyExistingSecret }}
+            - -prowlarr-api-key
+            - $(COMMENTARR_PROWLARR_API_KEY)
+            {{- end }}
+            {{- with .Values.search.interval }}
+            - -search-interval
+            - {{ . | quote }}
+            {{- end }}
             {{- with .Values.connections.qbittorrent.baseURL }}
             - -qbit-url
             - {{ . | quote }}
@@ -65,6 +73,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "commentarr.authSecretName" . }}
                   key: admin-password
+            {{- if .Values.connections.prowlarr.apiKeyExistingSecret }}
+            - name: COMMENTARR_PROWLARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.connections.prowlarr.apiKeyExistingSecret }}
+                  key: {{ .Values.connections.prowlarr.apiKeySecretKey | default "api-key" }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

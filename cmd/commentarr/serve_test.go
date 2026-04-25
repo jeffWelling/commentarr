@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jeffWelling/commentarr/internal/auth"
 	"github.com/jeffWelling/commentarr/internal/db"
@@ -80,6 +82,11 @@ func TestBootstrapAdmin_MissingHalfIsNoOp(t *testing.T) {
 
 func newTestAuthRepo(t *testing.T) *auth.Repo {
 	t.Helper()
+	return auth.NewRepo(newTestDB(t))
+}
+
+func newTestDB(t *testing.T) *sql.DB {
+	t.Helper()
 	dir := t.TempDir()
 	dsn := filepath.Join(dir, "test.db")
 	d, err := db.Open(dsn)
@@ -95,7 +102,7 @@ func newTestAuthRepo(t *testing.T) *auth.Repo {
 	if err := db.Migrate(d, migrations); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return auth.NewRepo(d)
+	return d
 }
 
 func TestInfoFromProwlarr_EmptyURLReturnsNil(t *testing.T) {
@@ -118,6 +125,38 @@ func TestInfoFromProwlarr_PopulatesFields(t *testing.T) {
 func TestInfoFromQbit_EmptyURLReturnsNil(t *testing.T) {
 	if got := infoFromQbit("", "qbit"); got != nil {
 		t.Errorf("expected nil, got %+v", got)
+	}
+}
+
+func TestBuildSearchTick_DisabledWhenProwlarrUnconfigured(t *testing.T) {
+	cases := []struct {
+		name     string
+		url, key string
+		interval time.Duration
+	}{
+		{"no url", "", "key", time.Minute},
+		{"no key", "http://prowlarr", "", time.Minute},
+		{"interval zero", "http://prowlarr", "key", 0},
+		{"interval negative", "http://prowlarr", "key", -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ok := buildSearchTick(nil, tc.url, tc.key, "p", 6, 3, 8, tc.interval)
+			if ok {
+				t.Fatal("expected tick to be disabled")
+			}
+		})
+	}
+}
+
+func TestBuildSearchTick_EnabledWhenProwlarrConfigured(t *testing.T) {
+	d := newTestDB(t)
+	tick, ok := buildSearchTick(d, "http://prowlarr.test", "abc", "main", 6, 3, 8, time.Minute)
+	if !ok {
+		t.Fatal("expected tick to be enabled")
+	}
+	if tick.Name != "search-due" || tick.Interval != time.Minute || tick.Fn == nil {
+		t.Fatalf("unexpected tick: %+v", tick)
 	}
 }
 
