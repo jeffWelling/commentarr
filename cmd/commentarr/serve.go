@@ -417,7 +417,14 @@ func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadCl
 	}
 }
 
-func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, q *queue.Queue, imp *importer.Importer, e download.Event) {
+// importRunner abstracts the slice of *importer.Importer that
+// handleEvent actually uses. Lets tests inject a stub without standing
+// up the full classify/placer/trash/webhook stack.
+type importRunner interface {
+	Import(ctx context.Context, req importer.Request) (importer.Result, error)
+}
+
+func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, q *queue.Queue, imp importRunner, e download.Event) {
 	metrics.WatcherEventsTotal.WithLabelValues(e.Client, string(e.Kind)).Inc()
 	if e.Kind != download.EventCompleted {
 		log.Printf("download %s: client=%s job=%s", e.Kind, e.Client, e.Status.ClientJobID)

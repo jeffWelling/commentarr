@@ -11,7 +11,148 @@ import (
 
 	"github.com/jeffWelling/commentarr/internal/auth"
 	"github.com/jeffWelling/commentarr/internal/db"
+	"github.com/jeffWelling/commentarr/internal/download"
+	"github.com/jeffWelling/commentarr/internal/importer"
+	"github.com/jeffWelling/commentarr/internal/queue"
+	"github.com/jeffWelling/commentarr/internal/title"
 )
+
+type stubImporter struct {
+	calls int
+	res   importer.Result
+	err   error
+}
+
+func (s *stubImporter) Import(_ context.Context, _ importer.Request) (importer.Result, error) {
+	s.calls++
+	return s.res, s.err
+}
+
+func newHandleEventFixture(t *testing.T) (*download.JobRepo, title.Repo, *queue.Queue, *sql.DB) {
+	t.Helper()
+	d := newTestDB(t)
+	jobs := download.NewJobRepo(d)
+	titles := title.NewRepo(d)
+	q := queue.New(d)
+	return jobs, titles, q, d
+}
+
+func TestHandleEvent_NonCompletedKindIsLogOnly(t *testing.T) {
+	jobs, titles, q, _ := newHandleEventFixture(t)
+	imp := &stubImporter{}
+	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
+		Kind: download.EventError, Client: "qbit",
+		Status: download.Status{ClientJobID: "x"},
+	})
+	if imp.calls != 0 {
+		t.Fatal("error events must not invoke importer")
+	}
+}
+
+func TestHandleEvent_JobNotFoundIsNoOp(t *testing.T) {
+	jobs, titles, q, _ := newHandleEventFixture(t)
+	imp := &stubImporter{}
+	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
+		Kind: download.EventCompleted, Client: "qbit",
+		Status: download.Status{ClientJobID: "missing"},
+	})
+	if imp.calls != 0 {
+		t.Fatal("missing job should never reach importer")
+	}
+}
+
+func TestHandleEvent_TitleMissingMarksJobError(t *testing.T) {
+	jobs, titles, q, _ := newHandleEventFixture(t)
+	id, _ := jobs.Save(context.Background(), download.Job{
+		ClientName: "qbit", ClientJobID: "abc", TitleID: "tt-orphan",
+	})
+	imp := &stubImporter{}
+	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
+		Kind: download.EventCompleted, Client: "qbit",
+		Status: download.Status{ClientJobID: "abc", SavePath: "/nowhere"},
+	})
+	got, _ := jobs.FindByClientJob(context.Background(), "qbit", "abc")
+	if got.Status != "error" || got.ID != id {
+		t.Fatalf("expected job marked error, got %+v", got)
+	}
+}
+
+func TestHandleEvent_NoMainVideoMarksJobError(t *testing.T) {
+	jobs, titles, q, _ := newHandleEventFixture(t)
+	_ = titles.Insert(context.Background(), title.Title{
+		ID: "tt-1", Kind: title.KindMovie, DisplayName: "Test", FilePath: "/orig",
+	})
+	_, _ = jobs.Save(context.Background(), download.Job{
+		ClientName: "qbit", ClientJobID: "abc", TitleID: "tt-1",
+	})
+	dir := t.TempDir() // empty — FindMainVideo will fail
+	imp := &stubImporter{}
+	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
+		Kind: download.EventCompleted, Client: "qbit",
+		Status: download.Status{ClientJobID: "abc", SavePath: dir},
+	})
+	got, _ := jobs.FindByClientJob(context.Background(), "qbit", "abc")
+	if got.Status != "error" {
+		t.Fatalf("expected error status, got %q", got.Status)
+	}
+	if imp.calls != 0 {
+		t.Fatal("importer should not run when no main video")
+	}
+}
+
+func TestHandleEvent_SuccessMarksJobImportedAndQueueResolved(t *testing.T) {
+	jobs, titles, q, _ := newHandleEventFixture(t)
+	_ = titles.Insert(context.Background(), title.Title{
+		ID: "tt-1", Kind: title.KindMovie, DisplayName: "Test", FilePath: "/orig",
+	})
+	_ = q.MarkWanted(context.Background(), "tt-1")
+	_, _ = jobs.Save(context.Background(), download.Job{
+		ClientName: "qbit", ClientJobID: "abc", TitleID: "tt-1",
+	})
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "movie.mkv"), []byte("placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	imp := &stubImporter{res: importer.Result{Outcome: importer.OutcomeSuccess, FinalPath: "/lib/movie.mkv"}}
+	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
+		Kind: download.EventCompleted, Client: "qbit",
+		Status: download.Status{ClientJobID: "abc", SavePath: dir},
+	})
+
+	got, _ := jobs.FindByClientJob(context.Background(), "qbit", "abc")
+	if got.Status != "imported" {
+		t.Fatalf("expected imported, got %q", got.Status)
+	}
+	wanted, _ := q.Get(context.Background(), "tt-1")
+	if wanted.Status != queue.StatusResolved {
+		t.Fatalf("expected resolved, got %q", wanted.Status)
+	}
+}
+
+func TestHandleEvent_NonSuccessOutcomeLeavesQueueWanted(t *testing.T) {
+	jobs, titles, q, _ := newHandleEventFixture(t)
+	_ = titles.Insert(context.Background(), title.Title{
+		ID: "tt-1", Kind: title.KindMovie, DisplayName: "Test", FilePath: "/orig",
+	})
+	_ = q.MarkWanted(context.Background(), "tt-1")
+	_, _ = jobs.Save(context.Background(), download.Job{
+		ClientName: "qbit", ClientJobID: "abc", TitleID: "tt-1",
+	})
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "movie.mkv"), []byte("x"), 0o644)
+
+	imp := &stubImporter{res: importer.Result{Outcome: importer.OutcomeSafetyViolation}}
+	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
+		Kind: download.EventCompleted, Client: "qbit",
+		Status: download.Status{ClientJobID: "abc", SavePath: dir},
+	})
+
+	wanted, _ := q.Get(context.Background(), "tt-1")
+	if wanted.Status != queue.StatusWanted {
+		t.Fatalf("expected wanted (so next cycle can try a better candidate), got %q", wanted.Status)
+	}
+}
 
 func TestBootstrapAdmin_NoEnvIsNoOp(t *testing.T) {
 	t.Setenv("COMMENTARR_ADMIN_USERNAME", "")
