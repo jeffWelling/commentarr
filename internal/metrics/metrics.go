@@ -173,4 +173,29 @@ var (
 		Name: "commentarr_http_requests_in_flight",
 		Help: "HTTP requests currently being served.",
 	})
+
+	// PickerDecisionsTotal counts what the picker did per evaluated
+	// title, by decision.
+	// decision ∈ {queued, skipped_inflight, skipped_no_candidate, error}
+	PickerDecisionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_picker_decisions_total",
+		Help: "Picker outcomes per evaluated title.",
+	}, []string{"decision"})
+
+	// WatcherEventsTotal counts events emitted by the in-process
+	// watcher and routed by the importer consumer.
+	// kind ∈ {completed, error}
+	WatcherEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_watcher_events_total",
+		Help: "Watcher events processed by the importer consumer.",
+	}, []string{"client", "kind"})
+
+	// AutoImportRoutingErrorsTotal counts cases where the consumer
+	// couldn't even attempt an import (no matching job row, no main
+	// video file under SavePath, etc) — these never reach ImportsTotal.
+	// reason ∈ {job_not_found, title_not_found, no_main_video, import_error}
+	AutoImportRoutingErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_auto_import_routing_errors_total",
+		Help: "Watcher events that failed to route into the importer.",
+	}, []string{"reason"})
 )

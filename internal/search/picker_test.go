@@ -9,8 +9,11 @@ import (
 	"github.com/jeffWelling/commentarr/internal/db"
 	"github.com/jeffWelling/commentarr/internal/download"
 	"github.com/jeffWelling/commentarr/internal/indexer"
+	"github.com/jeffWelling/commentarr/internal/metrics"
 	"github.com/jeffWelling/commentarr/internal/title"
 	"github.com/jeffWelling/commentarr/internal/verify"
+
+	dto "github.com/prometheus/client_model/go"
 )
 
 type fakePickClient struct {
@@ -143,6 +146,31 @@ func TestPicker_RetryAllowedAfterErrorJob(t *testing.T) {
 	if !queued {
 		t.Fatal("error'd job should not block retry")
 	}
+}
+
+func TestPicker_EmitsDecisionMetric(t *testing.T) {
+	candRepo, jobRepo, titles := newPickerRepos(t)
+	persistCands(t, candRepo, titles, "tt-1", []verify.Scored{
+		{Release: indexer.Release{Title: "good", InfoHash: "aaa"}, Score: 12, LikelyCommentary: true},
+	})
+
+	before := counterValue(t, "queued")
+	p := NewPicker(candRepo, jobRepo, &fakePickClient{}, "commentarr", 8)
+	if _, _, err := p.PickAndQueueOne(context.Background(), "tt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := counterValue(t, "queued"); got <= before {
+		t.Errorf("expected picker_decisions_total{queued} to increment; got before=%v after=%v", before, got)
+	}
+}
+
+func counterValue(t *testing.T, decision string) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := metrics.PickerDecisionsTotal.WithLabelValues(decision).Write(m); err != nil {
+		t.Fatal(err)
+	}
+	return m.GetCounter().GetValue()
 }
 
 func TestPicker_FallsBackToURLWhenInfoHashMissing(t *testing.T) {

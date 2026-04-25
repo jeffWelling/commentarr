@@ -21,6 +21,7 @@ import (
 	"github.com/jeffWelling/commentarr/internal/httpserver"
 	"github.com/jeffWelling/commentarr/internal/importer"
 	"github.com/jeffWelling/commentarr/internal/indexer"
+	"github.com/jeffWelling/commentarr/internal/metrics"
 	"github.com/jeffWelling/commentarr/internal/placer"
 	"github.com/jeffWelling/commentarr/internal/queue"
 	"github.com/jeffWelling/commentarr/internal/safety"
@@ -379,12 +380,14 @@ func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadCl
 }
 
 func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, q *queue.Queue, imp *importer.Importer, e download.Event) {
+	metrics.WatcherEventsTotal.WithLabelValues(e.Client, string(e.Kind)).Inc()
 	if e.Kind != download.EventCompleted {
 		log.Printf("download %s: client=%s job=%s", e.Kind, e.Client, e.Status.ClientJobID)
 		return
 	}
 	job, err := jobs.FindByClientJob(ctx, e.Client, e.Status.ClientJobID)
 	if err != nil {
+		metrics.AutoImportRoutingErrorsTotal.WithLabelValues("job_not_found").Inc()
 		log.Printf("import: lookup job (%s/%s): %v", e.Client, e.Status.ClientJobID, err)
 		return
 	}
@@ -393,12 +396,14 @@ func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo,
 	}
 	t, err := titles.FindByID(ctx, job.TitleID)
 	if err != nil {
+		metrics.AutoImportRoutingErrorsTotal.WithLabelValues("title_not_found").Inc()
 		log.Printf("import: lookup title %s: %v", job.TitleID, err)
 		_ = jobs.MarkStatus(ctx, job.ID, "error", "title not found")
 		return
 	}
 	newPath, err := validate.FindMainVideo(e.Status.SavePath)
 	if err != nil {
+		metrics.AutoImportRoutingErrorsTotal.WithLabelValues("no_main_video").Inc()
 		log.Printf("import: find main video in %q: %v", e.Status.SavePath, err)
 		_ = jobs.MarkStatus(ctx, job.ID, "error", err.Error())
 		return
@@ -412,6 +417,7 @@ func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo,
 		Edition:          job.Edition,
 	})
 	if err != nil {
+		metrics.AutoImportRoutingErrorsTotal.WithLabelValues("import_error").Inc()
 		log.Printf("import: %s: %v", t.ID, err)
 		_ = jobs.MarkStatus(ctx, job.ID, "error", err.Error())
 		return

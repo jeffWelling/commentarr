@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jeffWelling/commentarr/internal/download"
+	"github.com/jeffWelling/commentarr/internal/metrics"
 )
 
 // Picker walks the wanted queue, finds titles whose top likely-commentary
@@ -43,22 +44,27 @@ func NewPicker(candidates *Repo, jobs *download.JobRepo, client download.Downloa
 // or when an existing in-flight job already covers this title.
 func (p *Picker) PickAndQueueOne(ctx context.Context, titleID string) (string, bool, error) {
 	if existing, err := p.hasInflightJob(ctx, titleID); err != nil {
+		metrics.PickerDecisionsTotal.WithLabelValues("error").Inc()
 		return "", false, err
 	} else if existing {
+		metrics.PickerDecisionsTotal.WithLabelValues("skipped_inflight").Inc()
 		return "", false, nil
 	}
 
 	cands, err := p.candidates.ListCandidates(ctx, titleID)
 	if err != nil {
+		metrics.PickerDecisionsTotal.WithLabelValues("error").Inc()
 		return "", false, fmt.Errorf("list candidates %s: %w", titleID, err)
 	}
 	pick, ok := selectBest(cands, p.threshold)
 	if !ok {
+		metrics.PickerDecisionsTotal.WithLabelValues("skipped_no_candidate").Inc()
 		return "", false, nil
 	}
 
 	magnet := magnetOrURL(pick)
 	if magnet == "" {
+		metrics.PickerDecisionsTotal.WithLabelValues("skipped_no_candidate").Inc()
 		return "", false, nil
 	}
 	jobID, err := p.client.Add(ctx, download.AddRequest{
@@ -66,6 +72,7 @@ func (p *Picker) PickAndQueueOne(ctx context.Context, titleID string) (string, b
 		Category:    p.category,
 	})
 	if err != nil {
+		metrics.PickerDecisionsTotal.WithLabelValues("error").Inc()
 		return "", false, fmt.Errorf("client.Add: %w", err)
 	}
 	if _, err := p.jobs.Save(ctx, download.Job{
@@ -75,8 +82,10 @@ func (p *Picker) PickAndQueueOne(ctx context.Context, titleID string) (string, b
 		ReleaseTitle: pick.Release.Title,
 		Status:       "queued",
 	}); err != nil {
+		metrics.PickerDecisionsTotal.WithLabelValues("error").Inc()
 		return jobID, true, fmt.Errorf("save job: %w", err)
 	}
+	metrics.PickerDecisionsTotal.WithLabelValues("queued").Inc()
 	return jobID, true, nil
 }
 
