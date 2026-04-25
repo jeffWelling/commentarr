@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/jeffWelling/commentarr/internal/download"
 	"github.com/jeffWelling/commentarr/internal/metrics"
@@ -24,6 +25,8 @@ type Picker struct {
 	dispatcher *webhook.Dispatcher // optional; nil disables OnGrab dispatch
 	category   string
 	threshold  int
+	dryRun     bool
+	logf       func(format string, args ...any) // overridable for tests
 }
 
 // NewPicker returns a Picker. dispatcher is optional — pass nil if
@@ -40,7 +43,19 @@ func NewPicker(candidates *Repo, jobs *download.JobRepo, client download.Downloa
 		candidates: candidates, jobs: jobs, client: client,
 		dispatcher: dispatcher,
 		category:   category, threshold: threshold,
+		logf: log.Printf,
 	}
+}
+
+// WithDryRun returns the same Picker configured for dry-run mode. In
+// dry-run, PickAndQueueOne logs what *would* be queued, increments
+// PickerDecisionsTotal{decision="dry_run"}, and skips the download
+// client's Add() + the JobRepo Save() calls. Used by `serve -dry-run`
+// to smoke-test against real Prowlarr + qBit without queueing or
+// modifying anything.
+func (p *Picker) WithDryRun(b bool) *Picker {
+	p.dryRun = b
+	return p
 }
 
 // PickAndQueueOne selects the highest-scoring likely-commentary
@@ -70,6 +85,15 @@ func (p *Picker) PickAndQueueOne(ctx context.Context, titleID string) (string, b
 	magnet := magnetOrURL(pick)
 	if magnet == "" {
 		metrics.PickerDecisionsTotal.WithLabelValues("skipped_no_candidate").Inc()
+		return "", false, nil
+	}
+	if p.dryRun {
+		// Caller treats this as a no-op (ok=false). The dry_run
+		// metric + log line are how the operator sees what would
+		// have happened.
+		metrics.PickerDecisionsTotal.WithLabelValues("dry_run").Inc()
+		p.logf("DRY-RUN: would queue title=%s release=%q score=%d magnet=%s indexer=%s",
+			titleID, pick.Release.Title, pick.Score, magnet, pick.Release.Indexer)
 		return "", false, nil
 	}
 	jobID, err := p.client.Add(ctx, download.AddRequest{

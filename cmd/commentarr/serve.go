@@ -60,6 +60,7 @@ func serveCmd(args []string) error {
 	placementSeparate := fset.String("placement-separate-root", "", "alt library root (required when placement-mode=separate-library)")
 	placementTrashDir := fset.String("placement-trash-dir", "", "trash directory (required when placement-mode=replace)")
 	confidenceMin := fset.Float64("confidence-min", 0.85, "auto-import classifier confidence threshold")
+	dryRun := fset.Bool("dry-run", false, "log what the picker + importer would do without queueing downloads or moving files")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -141,8 +142,12 @@ func serveCmd(args []string) error {
 	dlClient, dlOK := buildDownloadClient(*qbitURL, *qbitUsername, *qbitPassword, *qbitName)
 
 	if dlOK && *pickerInterval > 0 {
-		ticks = append(ticks, buildPickerTick(d, dlClient, *watchCategory, *scoreThreshold, *pickerInterval))
-		fmt.Printf("picker enabled: interval=%s, threshold=%d\n", *pickerInterval, *scoreThreshold)
+		ticks = append(ticks, buildPickerTick(d, dlClient, *watchCategory, *scoreThreshold, *pickerInterval, *dryRun))
+		mode := ""
+		if *dryRun {
+			mode = " (dry-run)"
+		}
+		fmt.Printf("picker enabled%s: interval=%s, threshold=%d\n", mode, *pickerInterval, *scoreThreshold)
 	}
 
 	dmn := daemon.New(daemon.Config{Ticks: ticks})
@@ -150,17 +155,26 @@ func serveCmd(args []string) error {
 
 	// Watcher + importer consumer run as standalone goroutines because
 	// the watcher owns its own ticker (it's stateful — dedupes seen jobs)
-	// and the consumer is event-driven, not interval-driven.
+	// and the consumer is event-driven, not interval-driven. Under
+	// -dry-run we still poll qBit (read-only smoke test) but log events
+	// instead of routing them through the importer (which would move
+	// files on disk for any pre-existing job rows).
 	if dlOK && *watchInterval > 0 {
 		events := startWatcher(ctx, dlClient, *watchCategory, *watchInterval)
-		go importerConsumer(ctx, d, dlClient, events, placer.Config{
-			Mode:             placer.Mode(*placementMode),
-			FilenameTemplate: *placementTemplate,
-			TrashDir:         *placementTrashDir,
-			SeparateRoot:     *placementSeparate,
-		}, *confidenceMin)
-		fmt.Printf("watcher+importer enabled: qbit=%q, category=%q, interval=%s\n",
-			*qbitName, *watchCategory, *watchInterval)
+		if *dryRun {
+			go drainEvents(ctx, events)
+			fmt.Printf("watcher enabled (dry-run): qbit=%q, category=%q, interval=%s\n",
+				*qbitName, *watchCategory, *watchInterval)
+		} else {
+			go importerConsumer(ctx, d, dlClient, events, placer.Config{
+				Mode:             placer.Mode(*placementMode),
+				FilenameTemplate: *placementTemplate,
+				TrashDir:         *placementTrashDir,
+				SeparateRoot:     *placementSeparate,
+			}, *confidenceMin)
+			fmt.Printf("watcher+importer enabled: qbit=%q, category=%q, interval=%s\n",
+				*qbitName, *watchCategory, *watchInterval)
+		}
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -364,10 +378,10 @@ func startWatcher(ctx context.Context, client download.DownloadClient, category 
 // every interval and queues the top likely-commentary candidate per
 // title via the Picker. Eligibility checks (existing in-flight job,
 // score threshold) live inside Picker.PickAndQueueOne.
-func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration) daemon.Tick {
+func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration, dryRun bool) daemon.Tick {
 	picker := search.NewPicker(search.NewRepo(d), download.NewJobRepo(d), client,
 		webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}),
-		category, threshold)
+		category, threshold).WithDryRun(dryRun)
 	q := queue.New(d)
 	return daemon.Tick{
 		Name:     "picker",
@@ -393,6 +407,25 @@ func buildPickerTick(d *sql.DB, client download.DownloadClient, category string,
 				log.Printf("picker tick: queued %d downloads", queued)
 			}
 		},
+	}
+}
+
+// drainEvents replaces importerConsumer in dry-run mode. It just logs
+// each event the watcher emits so the operator can see qBit is being
+// polled, then drops the event. No DB lookups, no file moves, no
+// importer invocations.
+func drainEvents(ctx context.Context, events <-chan download.Event) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e, ok := <-events:
+			if !ok {
+				return
+			}
+			log.Printf("DRY-RUN: watcher saw %s for client=%s job=%s name=%q (would route to importer if real run)",
+				e.Kind, e.Client, e.Status.ClientJobID, e.Status.Name)
+		}
 	}
 }
 

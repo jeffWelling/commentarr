@@ -2,7 +2,9 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -171,6 +173,57 @@ func counterValue(t *testing.T, decision string) float64 {
 		t.Fatal(err)
 	}
 	return m.GetCounter().GetValue()
+}
+
+func TestPicker_DryRunSkipsAddAndSave(t *testing.T) {
+	candRepo, jobRepo, titles := newPickerRepos(t)
+	persistCands(t, candRepo, titles, "tt-1", []verify.Scored{
+		{Release: indexer.Release{Title: "good", InfoHash: "aaa"}, Score: 12, LikelyCommentary: true},
+	})
+
+	client := &fakePickClient{}
+	var logged []string
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8).WithDryRun(true)
+	p.logf = func(format string, args ...any) {
+		logged = append(logged, fmt.Sprintf(format, args...))
+	}
+
+	jobID, queued, err := p.PickAndQueueOne(context.Background(), "tt-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued || jobID != "" {
+		t.Fatalf("dry-run must not return queued; got id=%q queued=%v", jobID, queued)
+	}
+	if len(client.added) != 0 {
+		t.Fatalf("dry-run must not call client.Add; got %+v", client.added)
+	}
+	// No job row should have been persisted either.
+	if _, err := jobRepo.FindByClientJob(context.Background(), "fake", "any"); err == nil {
+		t.Fatal("dry-run must not save a job row")
+	}
+	if len(logged) == 0 {
+		t.Fatal("dry-run must log what it would have queued")
+	}
+	if !strings.Contains(logged[0], "DRY-RUN") || !strings.Contains(logged[0], "tt-1") {
+		t.Errorf("log line missing DRY-RUN or title id: %q", logged[0])
+	}
+}
+
+func TestPicker_DryRunEmitsDryRunMetric(t *testing.T) {
+	candRepo, jobRepo, titles := newPickerRepos(t)
+	persistCands(t, candRepo, titles, "tt-1", []verify.Scored{
+		{Release: indexer.Release{Title: "good", InfoHash: "aaa"}, Score: 12, LikelyCommentary: true},
+	})
+	before := counterValue(t, "dry_run")
+	p := NewPicker(candRepo, jobRepo, &fakePickClient{}, nil, "commentarr", 8).WithDryRun(true)
+	p.logf = func(string, ...any) {}
+	if _, _, err := p.PickAndQueueOne(context.Background(), "tt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := counterValue(t, "dry_run"); got <= before {
+		t.Errorf("dry_run counter didn't increment: before=%v after=%v", before, got)
+	}
 }
 
 func TestPicker_FallsBackToURLWhenInfoHashMissing(t *testing.T) {

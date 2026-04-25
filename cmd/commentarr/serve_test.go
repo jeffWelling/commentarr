@@ -358,7 +358,7 @@ func TestValidateServeFlags(t *testing.T) {
 func TestBuildPickerTick_ProducesNamedTick(t *testing.T) {
 	c, _ := buildDownloadClient("http://qbit.test", "u", "p", "qbit")
 	d := newTestDB(t)
-	tick := buildPickerTick(d, c, "commentarr", 8, 5*time.Minute)
+	tick := buildPickerTick(d, c, "commentarr", 8, 5*time.Minute, false)
 	if tick.Name != "picker" || tick.Interval != 5*time.Minute || tick.Fn == nil {
 		t.Fatalf("unexpected tick: %+v", tick)
 	}
