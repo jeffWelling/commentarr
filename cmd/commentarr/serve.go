@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,6 +62,8 @@ func serveCmd(args []string) error {
 	placementTrashDir := fset.String("placement-trash-dir", "", "trash directory (required when placement-mode=replace)")
 	confidenceMin := fset.Float64("confidence-min", 0.85, "auto-import classifier confidence threshold")
 	dryRun := fset.Bool("dry-run", false, "log what the picker + importer would do without queueing downloads or moving files")
+	pathTranslateFrom := fset.String("path-translate-from", "", "rewrite this prefix in qBit save paths (e.g. /downloads if qBit reports container paths)")
+	pathTranslateTo := fset.String("path-translate-to", "", "...to this prefix on the daemon's filesystem (e.g. /Volumes/downloads for an SMB mount)")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -171,9 +174,12 @@ func serveCmd(args []string) error {
 				FilenameTemplate: *placementTemplate,
 				TrashDir:         *placementTrashDir,
 				SeparateRoot:     *placementSeparate,
-			}, *confidenceMin)
+			}, *confidenceMin, pathTranslator(*pathTranslateFrom, *pathTranslateTo))
 			fmt.Printf("watcher+importer enabled: qbit=%q, category=%q, interval=%s\n",
 				*qbitName, *watchCategory, *watchInterval)
+			if *pathTranslateFrom != "" {
+				fmt.Printf("path translate: %q -> %q\n", *pathTranslateFrom, *pathTranslateTo)
+			}
 		}
 	}
 
@@ -440,7 +446,25 @@ func drainEvents(ctx context.Context, events <-chan download.Event) {
 // logged — they're recoverable across restarts because the watcher
 // dedupe set is in-memory only, so a restart re-emits the same
 // completion event.
-func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64) {
+// pathTranslator returns a func that rewrites the configured prefix in
+// a path. When from is empty, the returned func is the identity. Used
+// to bridge "qBit reports container paths, daemon sees a mounted
+// filesystem at a different mount-point" deployments — e.g., daemon
+// runs on a Mac with /Volumes/downloads SMB-mounted while qBit
+// reports /downloads.
+func pathTranslator(from, to string) func(string) string {
+	if from == "" {
+		return func(s string) string { return s }
+	}
+	return func(s string) string {
+		if strings.HasPrefix(s, from) {
+			return to + s[len(from):]
+		}
+		return s
+	}
+}
+
+func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64, translatePath func(string) string) {
 	jobs := download.NewJobRepo(d)
 	titles := title.NewRepo(d)
 	q := queue.New(d)
@@ -464,6 +488,7 @@ func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadCl
 			if !ok {
 				return
 			}
+			e.Status.SavePath = translatePath(e.Status.SavePath)
 			// OnDownload fires for every terminal event (completed +
 			// error) — receivers want to know about failed downloads
 			// too, not just successes. Importer fires its own OnImport

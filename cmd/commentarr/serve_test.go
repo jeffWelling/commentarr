@@ -319,6 +319,28 @@ func TestBuildDownloadClient_EnabledWhenQbitConfigured(t *testing.T) {
 	}
 }
 
+func TestPathTranslator(t *testing.T) {
+	cases := []struct {
+		name      string
+		from, to  string
+		in        string
+		want      string
+	}{
+		{"identity when from is empty", "", "", "/downloads/Brazil", "/downloads/Brazil"},
+		{"prefix swapped", "/downloads", "/Volumes/downloads", "/downloads/Brazil", "/Volumes/downloads/Brazil"},
+		{"non-matching path passes through", "/downloads", "/Volumes/downloads", "/elsewhere/Brazil", "/elsewhere/Brazil"},
+		{"empty input stays empty", "/downloads", "/Volumes/downloads", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fn := pathTranslator(tc.from, tc.to)
+			if got := fn(tc.in); got != tc.want {
+				t.Errorf("translate(%q): got %q want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStartWatcher_ReturnsBufferedChannel(t *testing.T) {
 	c, _ := buildDownloadClient("http://qbit.test", "u", "p", "qbit")
 	ctx, cancel := context.WithCancel(context.Background())
