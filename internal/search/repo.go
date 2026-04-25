@@ -87,7 +87,10 @@ func (r *Repo) SaveCandidates(ctx context.Context, titleID string, scored []veri
 }
 
 // ListCandidates returns every candidate for a title, sorted by score
-// descending.
+// descending. Within tied scores, healthier swarms come first
+// (seeders DESC) so the picker prefers releases that will actually
+// download — a top-scored release with a dead swarm is worse than a
+// same-scored release with 100 seeders.
 func (r *Repo) ListCandidates(ctx context.Context, titleID string) ([]Candidate, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT c.title_id, c.score, c.reasons_json, c.likely,
@@ -95,7 +98,7 @@ func (r *Repo) ListCandidates(ctx context.Context, titleID string) ([]Candidate,
 		FROM title_candidates c
 		JOIN releases r ON r.identity = c.release_identity
 		WHERE c.title_id = ?
-		ORDER BY c.score DESC, c.created_at ASC`, titleID)
+		ORDER BY c.score DESC, r.seeders DESC, c.created_at ASC`, titleID)
 	if err != nil {
 		return nil, fmt.Errorf("list candidates %s: %w", titleID, err)
 	}

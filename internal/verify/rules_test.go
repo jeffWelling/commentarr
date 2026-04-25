@@ -18,6 +18,28 @@ func TestDefaultRules_NegativeForWebRip(t *testing.T) {
 	}
 }
 
+func TestScoreTitle_DCAbbreviation(t *testing.T) {
+	cases := []struct {
+		title     string
+		wantScore int // criterion (10) + DC (5) where applicable
+	}{
+		{"Brazil (1985) DC Criterion (1080p BluRay x265 HEVC 10bit Tigole)", 15},
+		{"Brazil 1985 Criterion DC 720p BluRay", 15},
+		{"Brazil.1985.DC.Criterion.1080p.BluRay", 15},
+		// don't false-positive on words containing DC
+		{"Brazil 1985 Criterion DCS 1080p", 10},
+		{"Brazil 1985 Criterion 5.1 DCEU 1080p", 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.title, func(t *testing.T) {
+			got := ScoreTitle(tc.title, 0, DefaultRules())
+			if got.Score != tc.wantScore {
+				t.Errorf("score=%d want=%d (reasons=%v)", got.Score, tc.wantScore, got.Reasons)
+			}
+		})
+	}
+}
+
 func TestScoreTitle_IncludesReasonsPerMatch(t *testing.T) {
 	rules := DefaultRules()
 	got := ScoreTitle("Movie.2020.Criterion.Collection.1080p", 10<<30, rules)

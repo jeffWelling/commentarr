@@ -24,6 +24,11 @@ func DefaultRules() []Rule {
 		{Name: "special_edition", Pattern: regexp.MustCompile(`(?i)special[\s._-]*edition`), Score: 5},
 		{Name: "collector", Pattern: regexp.MustCompile(`(?i)collector`), Score: 5},
 		{Name: "directors_cut", Pattern: regexp.MustCompile(`(?i)director'?s?[\s._-]*cut`), Score: 5},
+		// Scene + scene-adjacent groups (Tigole, etc) abbreviate
+		// "Director's Cut" as "DC" inside parentheses or surrounded by
+		// dots — guard the match with anchors so "DC" inside a longer
+		// word ("DCS", "DCEU", track count "5.1 DC") doesn't fire.
+		{Name: "directors_cut_dc", Pattern: regexp.MustCompile(`(?i)(?:^|[\s._\(])DC(?:[\s._\)]|$)`), Score: 5},
 		{Name: "remastered", Pattern: regexp.MustCompile(`(?i)remastered`), Score: 3},
 		{Name: "webrip_penalty", Pattern: regexp.MustCompile(`(?i)web[-.]?rip`), Score: -5},
 		{Name: "cam_penalty", Pattern: regexp.MustCompile(`(?i)\b(cam|hdcam|telecine|ts)\b`), Score: -10},
