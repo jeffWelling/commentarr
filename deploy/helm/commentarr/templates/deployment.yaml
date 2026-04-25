@@ -72,6 +72,26 @@ spec:
             - -watch-category
             - {{ . | quote }}
             {{- end }}
+            {{- with .Values.picker.interval }}
+            - -picker-interval
+            - {{ . | quote }}
+            {{- end }}
+            {{- with .Values.placement.mode }}
+            - -placement-mode
+            - {{ . | quote }}
+            {{- end }}
+            {{- with .Values.placement.template }}
+            - -placement-template
+            - {{ . | quote }}
+            {{- end }}
+            {{- with .Values.placement.separateRoot }}
+            - -placement-separate-root
+            - {{ . | quote }}
+            {{- end }}
+            {{- with .Values.placement.trashDir }}
+            - -placement-trash-dir
+            - {{ . | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 7878

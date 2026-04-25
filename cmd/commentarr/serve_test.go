@@ -149,38 +149,54 @@ func TestBuildSearchTick_DisabledWhenProwlarrUnconfigured(t *testing.T) {
 	}
 }
 
-func TestBuildWatcher_DisabledWhenQbitUnconfigured(t *testing.T) {
+func TestBuildDownloadClient_DisabledWhenQbitUnconfigured(t *testing.T) {
 	cases := []struct {
-		name                       string
-		url, username, password    string
-		interval                   time.Duration
+		name                    string
+		url, username, password string
 	}{
-		{"no url", "", "u", "p", time.Second},
-		{"no user", "http://qbit", "", "p", time.Second},
-		{"no pass", "http://qbit", "u", "", time.Second},
-		{"interval zero", "http://qbit", "u", "p", 0},
-		{"interval negative", "http://qbit", "u", "p", -1},
+		{"no url", "", "u", "p"},
+		{"no user", "http://qbit", "", "p"},
+		{"no pass", "http://qbit", "u", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w, ev, ok := buildWatcher(tc.url, tc.username, tc.password, "qbit", "commentarr", tc.interval)
-			if ok || w != nil || ev != nil {
-				t.Fatalf("expected disabled, got w=%v ev=%v ok=%v", w, ev, ok)
+			c, ok := buildDownloadClient(tc.url, tc.username, tc.password, "qbit")
+			if ok || c != nil {
+				t.Fatalf("expected disabled, got c=%v ok=%v", c, ok)
 			}
 		})
 	}
 }
 
-func TestBuildWatcher_EnabledWhenQbitConfigured(t *testing.T) {
-	w, ev, ok := buildWatcher("http://qbit.test", "user", "pass", "qbit", "commentarr", 30*time.Second)
-	if !ok {
-		t.Fatal("expected enabled")
+func TestBuildDownloadClient_EnabledWhenQbitConfigured(t *testing.T) {
+	c, ok := buildDownloadClient("http://qbit.test", "user", "pass", "qbit")
+	if !ok || c == nil {
+		t.Fatalf("expected enabled, got c=%v ok=%v", c, ok)
 	}
-	if w == nil || ev == nil {
-		t.Fatalf("expected non-nil watcher + chan, got w=%v ev=%v", w, ev)
+	if c.Name() != "qbit" {
+		t.Errorf("name not propagated: %q", c.Name())
+	}
+}
+
+func TestStartWatcher_ReturnsBufferedChannel(t *testing.T) {
+	c, _ := buildDownloadClient("http://qbit.test", "u", "p", "qbit")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ev := startWatcher(ctx, c, "commentarr", 30*time.Second)
+	if ev == nil {
+		t.Fatal("expected non-nil channel")
 	}
 	if cap(ev) < 16 {
 		t.Errorf("event channel buffer too small: %d", cap(ev))
+	}
+}
+
+func TestBuildPickerTick_ProducesNamedTick(t *testing.T) {
+	c, _ := buildDownloadClient("http://qbit.test", "u", "p", "qbit")
+	d := newTestDB(t)
+	tick := buildPickerTick(d, c, "commentarr", 8, 5*time.Minute)
+	if tick.Name != "picker" || tick.Interval != 5*time.Minute || tick.Fn == nil {
+		t.Fatalf("unexpected tick: %+v", tick)
 	}
 }
 

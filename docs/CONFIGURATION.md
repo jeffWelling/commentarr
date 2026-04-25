@@ -34,19 +34,39 @@ commentarr serve
   -qbit-name         qBittorrent instance label     default "qbittorrent"
   -watch-interval    in-process watcher poll period default 30s  (0 disables)
   -watch-category    category/label to watch        default "commentarr"
+  -picker-interval   auto-pick loop period          default 5m   (0 disables)
+  -placement-mode    sidecar | replace | separate-library  default "sidecar"
+  -placement-template auto-import filename template default "{title} ({year}) - {edition}.{ext}"
+  -placement-separate-root  alt library root        default ""   (required for separate-library)
+  -placement-trash-dir      trash directory         default ""   (required for replace)
+  -confidence-min    auto-import classifier gate    default 0.85
 ```
 
-Setting `-prowlarr-url` + `-prowlarr-api-key` enables the in-process
-search loop: every `-search-interval` the daemon walks the wanted queue
-for titles whose `next_search_at` has elapsed, queries Prowlarr, and
-persists candidates. Empty URL or empty key keeps the loop disabled —
-fall back to `commentarr search` from cron in that case.
+The in-process pipeline runs end-to-end when **all three** config
+groups are set:
 
-Setting `-qbit-url` + `-qbit-username` + `-qbit-password` enables the
-in-process watcher. Every `-watch-interval` it polls qBit for jobs
-tagged with `-watch-category` (default `commentarr`) and emits one
-event per `completed` or `error`. Today those events are logged; the
-auto-pick→auto-download→auto-import chain lands in the next iteration.
+1. **Search** — `-prowlarr-url` + `-prowlarr-api-key`. Every
+   `-search-interval` the daemon walks the wanted queue for titles
+   whose `next_search_at` has elapsed, queries Prowlarr, and persists
+   scored candidates.
+2. **Pick** — `-qbit-url` + `-qbit-username` + `-qbit-password` (the
+   download client is what makes the picker useful). Every
+   `-picker-interval` the picker walks every wanted title, finds the
+   top likely-commentary candidate above `-score-threshold`, and
+   submits it to the download client. A title with an existing
+   in-flight download job is skipped — only failed jobs allow retry.
+3. **Watch + import** — same qBit credentials. Every
+   `-watch-interval` the watcher polls qBit for completions tagged
+   with `-watch-category`. Each completion is matched back to its
+   `download_jobs` row, the largest video file under the SavePath is
+   located, and the importer runs the full pipeline (validate →
+   classify → safety → place → trash → webhook). The job row is then
+   marked `imported` or `error`.
+
+Disable any individual stage by leaving its credentials empty or
+setting its interval to 0. Disabled stages can be replaced with the
+matching CLI subcommands (`commentarr search`, `commentarr import`)
+running from cron.
 
 Notes:
 

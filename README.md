@@ -31,12 +31,12 @@ SPA embedded via `go:embed`, Helm chart, multi-arch Dockerfile.
 Classifier benchmark on 139 titles: precision 0.98, recall 1.00,
 F1 0.99.
 
-The in-process daemon runs the trash-purge tick, the search loop
-(when `-prowlarr-url` + `-prowlarr-api-key` are set), and the
-download-completion watcher (when `-qbit-url` + `-qbit-username` +
-`-qbit-password` are set). The auto-pick→auto-download→auto-import
-chain ships next; until then, watcher events are logged and the
-post-download pipeline runs via `commentarr import` from cron.
+The in-process daemon runs the full pipeline end-to-end when both
+Prowlarr and qBit are configured: search → pick top candidate →
+download → watch for completion → validate → classify → safety →
+place → trash. Each stage is independently togglable via flags or
+chart values — disabled stages can run as `commentarr search` /
+`commentarr import` from cron instead.
 
 ## Build
 

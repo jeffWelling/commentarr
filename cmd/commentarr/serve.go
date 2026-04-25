@@ -14,17 +14,21 @@ import (
 
 	v1 "github.com/jeffWelling/commentarr/internal/api/v1"
 	"github.com/jeffWelling/commentarr/internal/auth"
+	"github.com/jeffWelling/commentarr/internal/classify"
 	"github.com/jeffWelling/commentarr/internal/daemon"
 	"github.com/jeffWelling/commentarr/internal/db"
 	"github.com/jeffWelling/commentarr/internal/download"
 	"github.com/jeffWelling/commentarr/internal/httpserver"
+	"github.com/jeffWelling/commentarr/internal/importer"
 	"github.com/jeffWelling/commentarr/internal/indexer"
+	"github.com/jeffWelling/commentarr/internal/placer"
 	"github.com/jeffWelling/commentarr/internal/queue"
 	"github.com/jeffWelling/commentarr/internal/safety"
 	"github.com/jeffWelling/commentarr/internal/search"
 	"github.com/jeffWelling/commentarr/internal/sse"
 	"github.com/jeffWelling/commentarr/internal/title"
 	"github.com/jeffWelling/commentarr/internal/trash"
+	"github.com/jeffWelling/commentarr/internal/validate"
 	"github.com/jeffWelling/commentarr/internal/verify"
 	"github.com/jeffWelling/commentarr/internal/webhook"
 )
@@ -49,6 +53,12 @@ func serveCmd(args []string) error {
 	qbitName := fset.String("qbit-name", "qbittorrent", "qBittorrent instance label")
 	watchInterval := fset.Duration("watch-interval", 30*time.Second, "how often the in-process watcher polls download clients (0 disables)")
 	watchCategory := fset.String("watch-category", "commentarr", "category/label the watcher monitors")
+	pickerInterval := fset.Duration("picker-interval", 5*time.Minute, "how often the auto-pick loop runs against wanted titles (0 disables)")
+	placementMode := fset.String("placement-mode", "sidecar", "auto-import placement mode: sidecar | replace | separate-library")
+	placementTemplate := fset.String("placement-template", "{title} ({year}) - {edition}.{ext}", "auto-import filename template")
+	placementSeparate := fset.String("placement-separate-root", "", "alt library root (required when placement-mode=separate-library)")
+	placementTrashDir := fset.String("placement-trash-dir", "", "trash directory (required when placement-mode=replace)")
+	confidenceMin := fset.Float64("confidence-min", 0.85, "auto-import classifier confidence threshold")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -90,6 +100,8 @@ func serveCmd(args []string) error {
 
 	trashSvc := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
 
+	// Assemble all ticks first; the daemon snapshots the slice on
+	// construction, so any append after daemon.New() is silently dropped.
 	ticks := []daemon.Tick{
 		{Name: "trash-purge", Interval: time.Hour, Fn: func(c context.Context) {
 			_, _ = trashSvc.PurgeExpired(c)
@@ -100,16 +112,32 @@ func serveCmd(args []string) error {
 		ticks = append(ticks, tick)
 		fmt.Printf("search loop enabled: prowlarr=%q, interval=%s\n", *prowlarrName, *searchInterval)
 	}
+
+	// Build the download client once and share it across the picker
+	// tick and the watcher (so both speak to the same logged-in session).
+	dlClient, dlOK := buildDownloadClient(*qbitURL, *qbitUsername, *qbitPassword, *qbitName)
+
+	if dlOK && *pickerInterval > 0 {
+		ticks = append(ticks, buildPickerTick(d, dlClient, *watchCategory, *scoreThreshold, *pickerInterval))
+		fmt.Printf("picker enabled: interval=%s, threshold=%d\n", *pickerInterval, *scoreThreshold)
+	}
+
 	dmn := daemon.New(daemon.Config{Ticks: ticks})
 	go dmn.Run(ctx)
 
-	// Watcher runs its own ticker (it's stateful — dedupes seen jobs),
-	// so it lives outside the daemon's Tick set.
-	if w, events, ok := buildWatcher(*qbitURL, *qbitUsername, *qbitPassword, *qbitName,
-		*watchCategory, *watchInterval); ok {
-		go w.Run(ctx, events)
-		go logWatcherEvents(ctx, events)
-		fmt.Printf("watcher enabled: qbit=%q, category=%q, interval=%s\n", *qbitName, *watchCategory, *watchInterval)
+	// Watcher + importer consumer run as standalone goroutines because
+	// the watcher owns its own ticker (it's stateful — dedupes seen jobs)
+	// and the consumer is event-driven, not interval-driven.
+	if dlOK && *watchInterval > 0 {
+		events := startWatcher(ctx, dlClient, *watchCategory, *watchInterval)
+		go importerConsumer(ctx, d, dlClient, events, placer.Config{
+			Mode:             placer.Mode(*placementMode),
+			FilenameTemplate: *placementTemplate,
+			TrashDir:         *placementTrashDir,
+			SeparateRoot:     *placementSeparate,
+		}, *confidenceMin)
+		fmt.Printf("watcher+importer enabled: qbit=%q, category=%q, interval=%s\n",
+			*qbitName, *watchCategory, *watchInterval)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -247,34 +275,95 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 	}, true
 }
 
-// buildWatcher assembles a download.Watcher around a configured qBit
-// instance. Returns ok=false when qBit isn't configured (URL empty),
-// when the watcher is disabled (interval<=0), or when credentials
-// aren't supplied (the qBit API rejects everything without a session).
-//
-// Returns the watcher and a buffered event channel the caller is
-// expected to consume. When the next iteration lands the auto-import
-// chain, that consumer becomes the importer route.
-func buildWatcher(url, username, password, name, category string, interval time.Duration) (*download.Watcher, chan download.Event, bool) {
-	if url == "" || username == "" || password == "" || interval <= 0 {
-		return nil, nil, false
+// buildDownloadClient assembles a qBit adapter from flags. Returns
+// (nil, false) when qBit isn't fully configured — both URL and creds
+// are required (the qBit API rejects unauthenticated calls).
+func buildDownloadClient(url, username, password, name string) (download.DownloadClient, bool) {
+	if url == "" || username == "" || password == "" {
+		return nil, false
 	}
-	client := download.NewQBittorrent(download.QBittorrentConfig{
+	return download.NewQBittorrent(download.QBittorrentConfig{
 		BaseURL: url, Username: username, Password: password, Name: name,
-	})
+	}), true
+}
+
+// startWatcher attaches a download.Watcher to the given client and
+// starts its poll loop. The caller is responsible for honoring
+// "interval > 0" before calling — a non-positive interval here would
+// produce a Watcher whose underlying ticker silently uses the
+// default fallback (5s in download.NewWatcher), which would surprise
+// the operator. The check lives at the call site.
+func startWatcher(ctx context.Context, client download.DownloadClient, category string, interval time.Duration) chan download.Event {
 	w := download.NewWatcher([]download.DownloadClient{client}, category, interval)
 	// Buffer = 64 lets a brief consumer hiccup absorb several poll cycles
 	// without blocking the watcher goroutine. Watcher uses a select on
 	// ctx.Done() in its sender, so a stuck consumer eventually unblocks
 	// at shutdown.
 	events := make(chan download.Event, 64)
-	return w, events, true
+	go w.Run(ctx, events)
+	return events
 }
 
-// logWatcherEvents drains the watcher's event channel until ctx is
-// cancelled, logging completions + errors. This is the placeholder
-// consumer; the next iteration replaces it with the importer routing.
-func logWatcherEvents(ctx context.Context, events <-chan download.Event) {
+// buildPickerTick returns a daemon Tick that walks the wanted queue
+// every interval and queues the top likely-commentary candidate per
+// title via the Picker. Eligibility checks (existing in-flight job,
+// score threshold) live inside Picker.PickAndQueueOne.
+func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration) daemon.Tick {
+	picker := search.NewPicker(search.NewRepo(d), download.NewJobRepo(d), client, category, threshold)
+	q := queue.New(d)
+	return daemon.Tick{
+		Name:     "picker",
+		Interval: interval,
+		Fn: func(c context.Context) {
+			wanted, err := q.ListByStatus(c, queue.StatusWanted)
+			if err != nil {
+				log.Printf("picker tick: list wanted: %v", err)
+				return
+			}
+			queued := 0
+			for _, e := range wanted {
+				_, ok, perr := picker.PickAndQueueOne(c, e.TitleID)
+				if perr != nil {
+					log.Printf("picker tick: %s: %v", e.TitleID, perr)
+					continue
+				}
+				if ok {
+					queued++
+				}
+			}
+			if queued > 0 {
+				log.Printf("picker tick: queued %d downloads", queued)
+			}
+		},
+	}
+}
+
+// importerConsumer routes Watcher completions through the full import
+// pipeline. For each completed event, it looks up the corresponding
+// download_jobs row to get the title id, loads the title, finds the
+// largest video file under the client's reported SavePath, and runs
+// importer.Import(). The job row is then marked imported / error
+// based on the outcome.
+//
+// Errors during routing (job not found, title not found, etc) are
+// logged — they're recoverable across restarts because the watcher
+// dedupe set is in-memory only, so a restart re-emits the same
+// completion event.
+func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64) {
+	jobs := download.NewJobRepo(d)
+	titles := title.NewRepo(d)
+	pl := placer.New(placeCfg)
+	cls := classify.NewService(titles, classify.NewPipelineClassifier(), "commentarr-serve", client.Name())
+	tr := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
+	disp := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
+	imp := importer.New(importer.Deps{
+		Classify: cls, Placer: pl, Trash: tr, Webhook: disp,
+		SafetyCfg: safety.BuiltinConfig{
+			ClassifierConfidenceThreshold: confidenceMin,
+			RequireMagicMatch:             true,
+		},
+		Library: client.Name(),
+	})
 	for {
 		select {
 		case <-ctx.Done():
@@ -283,10 +372,61 @@ func logWatcherEvents(ctx context.Context, events <-chan download.Event) {
 			if !ok {
 				return
 			}
-			log.Printf("download %s: client=%s job=%s name=%q",
-				e.Kind, e.Client, e.Status.ClientJobID, e.Status.Name)
+			handleEvent(ctx, jobs, titles, imp, e)
 		}
 	}
+}
+
+func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, imp *importer.Importer, e download.Event) {
+	if e.Kind != download.EventCompleted {
+		log.Printf("download %s: client=%s job=%s", e.Kind, e.Client, e.Status.ClientJobID)
+		return
+	}
+	job, err := jobs.FindByClientJob(ctx, e.Client, e.Status.ClientJobID)
+	if err != nil {
+		log.Printf("import: lookup job (%s/%s): %v", e.Client, e.Status.ClientJobID, err)
+		return
+	}
+	if job.Status == "imported" {
+		return
+	}
+	t, err := titles.FindByID(ctx, job.TitleID)
+	if err != nil {
+		log.Printf("import: lookup title %s: %v", job.TitleID, err)
+		_ = jobs.MarkStatus(ctx, job.ID, "error", "title not found")
+		return
+	}
+	newPath, err := validate.FindMainVideo(e.Status.SavePath)
+	if err != nil {
+		log.Printf("import: find main video in %q: %v", e.Status.SavePath, err)
+		_ = jobs.MarkStatus(ctx, job.ID, "error", err.Error())
+		return
+	}
+	res, err := imp.Import(ctx, importer.Request{
+		NewFilePath:      newPath,
+		OriginalFilePath: t.FilePath,
+		TitleID:          t.ID,
+		Title:            t.DisplayName,
+		Year:             yearOf(t),
+		Edition:          job.Edition,
+	})
+	if err != nil {
+		log.Printf("import: %s: %v", t.ID, err)
+		_ = jobs.MarkStatus(ctx, job.ID, "error", err.Error())
+		return
+	}
+	_ = jobs.MarkStatus(ctx, job.ID, "imported", string(res.Outcome))
+	log.Printf("import: %s -> %s (outcome=%s)", t.ID, res.FinalPath, res.Outcome)
+}
+
+// yearOf renders a title's year as a string, returning "" when unknown
+// (zero year). The importer's filename template handles empty year
+// substitution gracefully.
+func yearOf(t title.Title) string {
+	if t.Year == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", t.Year)
 }
 
 // infoFromProwlarr builds an IndexerInfo slice for a configured Prowlarr

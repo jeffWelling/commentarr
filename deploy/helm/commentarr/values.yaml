@@ -62,6 +62,21 @@ watcher:
   interval: 30s
   category: commentarr
 
+# Picker loop. Walks the wanted queue every picker.interval and queues
+# the highest-scoring likely-commentary candidate per title via the
+# configured download client. Disabled when no download client is
+# configured or picker.interval is 0.
+picker:
+  interval: 5m
+
+# Auto-import placement. Applied to files that complete download via
+# the watcher → importer chain.
+placement:
+  mode: sidecar          # sidecar | replace | separate-library
+  template: '{title} ({year}) - {edition}.{ext}'
+  separateRoot: ""       # required when mode=separate-library
+  trashDir: ""           # required when mode=replace
+
 service:
   type: ClusterIP
   port: 7878
