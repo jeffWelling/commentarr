@@ -352,6 +352,7 @@ func buildPickerTick(d *sql.DB, client download.DownloadClient, category string,
 func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64) {
 	jobs := download.NewJobRepo(d)
 	titles := title.NewRepo(d)
+	q := queue.New(d)
 	pl := placer.New(placeCfg)
 	cls := classify.NewService(titles, classify.NewPipelineClassifier(), "commentarr-serve", client.Name())
 	tr := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
@@ -372,12 +373,12 @@ func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadCl
 			if !ok {
 				return
 			}
-			handleEvent(ctx, jobs, titles, imp, e)
+			handleEvent(ctx, jobs, titles, q, imp, e)
 		}
 	}
 }
 
-func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, imp *importer.Importer, e download.Event) {
+func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, q *queue.Queue, imp *importer.Importer, e download.Event) {
 	if e.Kind != download.EventCompleted {
 		log.Printf("download %s: client=%s job=%s", e.Kind, e.Client, e.Status.ClientJobID)
 		return
@@ -416,6 +417,16 @@ func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo,
 		return
 	}
 	_ = jobs.MarkStatus(ctx, job.ID, "imported", string(res.Outcome))
+	// Only an OutcomeSuccess means the new commentary-bearing file is
+	// now part of the library — that's when the title transitions out
+	// of "wanted." Other outcomes (safety_violation, non_compliant,
+	// error) leave the title wanted so the next search cycle can find
+	// a better candidate.
+	if res.Outcome == importer.OutcomeSuccess {
+		if err := q.MarkResolved(ctx, t.ID); err != nil {
+			log.Printf("import: MarkResolved %s: %v", t.ID, err)
+		}
+	}
 	log.Printf("import: %s -> %s (outcome=%s)", t.ID, res.FinalPath, res.Outcome)
 }
 
