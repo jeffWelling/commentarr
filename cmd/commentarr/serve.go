@@ -109,12 +109,25 @@ func serveCmd(args []string) error {
 	defer cancel()
 
 	trashSvc := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
+	purgeDispatcher := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
 
 	// Assemble all ticks first; the daemon snapshots the slice on
 	// construction, so any append after daemon.New() is silently dropped.
 	ticks := []daemon.Tick{
 		{Name: "trash-purge", Interval: time.Hour, Fn: func(c context.Context) {
-			_, _ = trashSvc.PurgeExpired(c)
+			purged, err := trashSvc.PurgeExpired(c)
+			if err != nil {
+				log.Printf("trash-purge: %v", err)
+				return
+			}
+			for _, it := range purged {
+				_ = purgeDispatcher.Dispatch(c, webhook.EventTrashExpire, map[string]interface{}{
+					"library":       it.Library,
+					"original_path": it.OriginalPath,
+					"trashed_path":  it.TrashPath,
+					"reason":        it.Reason,
+				})
+			}
 		}},
 	}
 	if tick, ok := buildSearchTick(d, *prowlarrURL, *prowlarrAPIKey, *prowlarrName,
@@ -352,7 +365,9 @@ func startWatcher(ctx context.Context, client download.DownloadClient, category 
 // title via the Picker. Eligibility checks (existing in-flight job,
 // score threshold) live inside Picker.PickAndQueueOne.
 func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration) daemon.Tick {
-	picker := search.NewPicker(search.NewRepo(d), download.NewJobRepo(d), client, category, threshold)
+	picker := search.NewPicker(search.NewRepo(d), download.NewJobRepo(d), client,
+		webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}),
+		category, threshold)
 	q := queue.New(d)
 	return daemon.Tick{
 		Name:     "picker",
@@ -416,6 +431,17 @@ func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadCl
 			if !ok {
 				return
 			}
+			// OnDownload fires for every terminal event (completed +
+			// error) — receivers want to know about failed downloads
+			// too, not just successes. Importer fires its own OnImport
+			// after a successful place; that's downstream of this.
+			_ = disp.Dispatch(ctx, webhook.EventDownload, map[string]interface{}{
+				"client":        e.Client,
+				"client_job_id": e.Status.ClientJobID,
+				"kind":          string(e.Kind),
+				"name":          e.Status.Name,
+				"save_path":     e.Status.SavePath,
+			})
 			handleEvent(ctx, jobs, titles, q, imp, e)
 		}
 	}

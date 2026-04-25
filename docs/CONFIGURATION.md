@@ -143,22 +143,7 @@ See [`SAFETY_RULES_REFERENCE.md`](SAFETY_RULES_REFERENCE.md).
 ### Webhooks
 
 Register URLs to receive events. Dispatcher retries failed deliveries
-with exponential backoff. Naming follows the *arr baseline (`OnX`):
-
-| Event | Fires when |
-|---|---|
-| `OnSearch`          | A search pass runs against an indexer. |
-| `OnGrab`            | The picker hands a release to the download client. |
-| `OnDownload`        | A download reaches a terminal state. |
-| `OnImport`          | The importer places a file. |
-| `OnReplace`         | A replace-mode import swaps an original out. |
-| `OnTrash`           | A file is moved to trash. |
-| `OnTrashExpire`     | The auto-purge ticker removes an aged trash item. |
-| `OnRestore`         | A trash item is restored to the library. |
-| `OnVerifyFail`      | Title-regex verification rejects a release. |
-| `OnSafetyViolation` | A safety rule fails (built-in or CEL). |
-| `OnHealthIssue`     | Future: degraded subsystem (indexer circuit open, etc). |
-| `OnTest`            | Manually fired from the UI to verify a webhook. |
+with exponential backoff. Naming follows the *arr baseline (`OnX`).
 
 Every payload uses the same envelope:
 
@@ -173,6 +158,32 @@ Every payload uses the same envelope:
 
 The `payload` shape varies per event. `version` is `"1"` today;
 breaking changes bump it.
+
+### Events emitted today
+
+| Event | Fires when | `payload` keys |
+|---|---|---|
+| `OnGrab`            | Picker hands a release to the download client. | `title_id`, `client`, `client_job_id`, `release_title`, `score` (int), `indexer` |
+| `OnDownload`        | A download reaches a terminal state in the watcher. | `client`, `client_job_id`, `kind` (`completed`\|`error`), `name`, `save_path` |
+| `OnImport`          | Importer places a file (any mode). | `title_id`, `final_path`, `mode` (`sidecar`\|`replace`\|`separate-library`) |
+| `OnReplace`         | A replace-mode import swaps an original out. | `title_id`, `trashed_path` |
+| `OnTrash`           | A file is moved to trash (during placement). | `library`, `trashed_path` |
+| `OnTrashExpire`     | Auto-purge ticker removes an aged trash item. | `library`, `original_path`, `trashed_path`, `reason` |
+| `OnSafetyViolation` | A safety rule fails (built-in or CEL). | `title_id`, `violations` (array of `{rule, detail}`) |
+| `OnTest`            | Manually fired from the UI to verify a webhook. | `message` (free-form string) |
+
+### Events reserved but not yet emitted
+
+These constants exist so a webhook receiver can subscribe in
+anticipation, but no current call site fires them. They're documented
+here so receivers can decide whether to subscribe defensively.
+
+| Event | Intent |
+|---|---|
+| `OnSearch`     | Per-search-pass summary (titles processed, candidates persisted). |
+| `OnVerifyFail` | A release that scored below threshold and was rejected. |
+| `OnRestore`    | A trash item restored to the library via the API. |
+| `OnHealthIssue`| Degraded subsystem (indexer circuit open, watcher stalled, etc). |
 
 ## Helm values (summary)
 

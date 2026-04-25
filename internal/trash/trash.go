@@ -42,22 +42,24 @@ func (t *Trash) List(ctx context.Context, library string) ([]Item, error) {
 }
 
 // PurgeExpired removes items past Retention from disk + flips purged=true.
-// No-op when AutoPurge is false or Retention <= 0.
-func (t *Trash) PurgeExpired(ctx context.Context) (int, error) {
+// Returns the items that were purged so callers can fan webhooks /
+// audit log entries out without re-querying. No-op when AutoPurge is
+// false or Retention <= 0.
+func (t *Trash) PurgeExpired(ctx context.Context) ([]Item, error) {
 	if !t.cfg.AutoPurge || t.cfg.Retention <= 0 {
-		return 0, nil
+		return nil, nil
 	}
 	cutoff := time.Now().UTC().Add(-t.cfg.Retention)
 	items, err := t.repo.Expired(ctx, cutoff)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	for _, it := range items {
 		if err := t.repo.DeleteFileAndMarkPurged(ctx, it); err != nil {
-			return 0, err
+			return nil, err
 		}
 		metrics.TrashItemsPurgedTotal.WithLabelValues(it.Library).Inc()
 		metrics.TrashItems.WithLabelValues(it.Library).Dec()
 	}
-	return len(items), nil
+	return items, nil
 }

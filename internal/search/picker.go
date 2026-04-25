@@ -7,6 +7,7 @@ import (
 
 	"github.com/jeffWelling/commentarr/internal/download"
 	"github.com/jeffWelling/commentarr/internal/metrics"
+	"github.com/jeffWelling/commentarr/internal/webhook"
 )
 
 // Picker walks the wanted queue, finds titles whose top likely-commentary
@@ -20,12 +21,15 @@ type Picker struct {
 	candidates *Repo
 	jobs       *download.JobRepo
 	client     download.DownloadClient
+	dispatcher *webhook.Dispatcher // optional; nil disables OnGrab dispatch
 	category   string
 	threshold  int
 }
 
-// NewPicker returns a Picker.
-func NewPicker(candidates *Repo, jobs *download.JobRepo, client download.DownloadClient, category string, threshold int) *Picker {
+// NewPicker returns a Picker. dispatcher is optional — pass nil if
+// the caller doesn't want the OnGrab webhook fired (e.g., a one-shot
+// CLI invocation).
+func NewPicker(candidates *Repo, jobs *download.JobRepo, client download.DownloadClient, dispatcher *webhook.Dispatcher, category string, threshold int) *Picker {
 	if threshold <= 0 {
 		threshold = 8
 	}
@@ -34,7 +38,8 @@ func NewPicker(candidates *Repo, jobs *download.JobRepo, client download.Downloa
 	}
 	return &Picker{
 		candidates: candidates, jobs: jobs, client: client,
-		category: category, threshold: threshold,
+		dispatcher: dispatcher,
+		category:   category, threshold: threshold,
 	}
 }
 
@@ -86,6 +91,16 @@ func (p *Picker) PickAndQueueOne(ctx context.Context, titleID string) (string, b
 		return jobID, true, fmt.Errorf("save job: %w", err)
 	}
 	metrics.PickerDecisionsTotal.WithLabelValues("queued").Inc()
+	if p.dispatcher != nil {
+		_ = p.dispatcher.Dispatch(ctx, webhook.EventGrab, map[string]interface{}{
+			"title_id":      titleID,
+			"client":        p.client.Name(),
+			"client_job_id": jobID,
+			"release_title": pick.Release.Title,
+			"score":         pick.Score,
+			"indexer":       pick.Release.Indexer,
+		})
+	}
 	return jobID, true, nil
 }
 

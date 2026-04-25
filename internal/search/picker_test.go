@@ -61,7 +61,7 @@ func TestPicker_PicksHighestScoringLikelyCommentary(t *testing.T) {
 	})
 
 	client := &fakePickClient{}
-	p := NewPicker(candRepo, jobRepo, client, "commentarr", 8)
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8)
 	jobID, queued, err := p.PickAndQueueOne(context.Background(), "tt-1")
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestPicker_NoQualifyingCandidateIsNoOp(t *testing.T) {
 	})
 
 	client := &fakePickClient{}
-	p := NewPicker(candRepo, jobRepo, client, "commentarr", 8)
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8)
 	_, queued, err := p.PickAndQueueOne(context.Background(), "tt-1")
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestPicker_SkipsTitleWithExistingInflightJob(t *testing.T) {
 	})
 
 	client := &fakePickClient{}
-	p := NewPicker(candRepo, jobRepo, client, "commentarr", 8)
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8)
 	_, queued, err := p.PickAndQueueOne(context.Background(), "tt-1")
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestPicker_RetryAllowedAfterErrorJob(t *testing.T) {
 	_ = jobRepo.MarkStatus(context.Background(), id, "error", "stalled")
 
 	client := &fakePickClient{}
-	p := NewPicker(candRepo, jobRepo, client, "commentarr", 8)
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8)
 	_, queued, err := p.PickAndQueueOne(context.Background(), "tt-1")
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestPicker_EmitsDecisionMetric(t *testing.T) {
 	})
 
 	before := counterValue(t, "queued")
-	p := NewPicker(candRepo, jobRepo, &fakePickClient{}, "commentarr", 8)
+	p := NewPicker(candRepo, jobRepo, &fakePickClient{}, nil, "commentarr", 8)
 	if _, _, err := p.PickAndQueueOne(context.Background(), "tt-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestPicker_FallsBackToURLWhenInfoHashMissing(t *testing.T) {
 	})
 
 	client := &fakePickClient{}
-	p := NewPicker(candRepo, jobRepo, client, "commentarr", 8)
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8)
 	_, queued, err := p.PickAndQueueOne(context.Background(), "tt-1")
 	if err != nil {
 		t.Fatal(err)

@@ -62,12 +62,12 @@ func TestTrash_PurgeRemovesOldItems(t *testing.T) {
 	}
 
 	time.Sleep(30 * time.Millisecond)
-	n, err := tr.PurgeExpired(ctx)
+	purged, err := tr.PurgeExpired(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("expected 1 purged, got %d", n)
+	if len(purged) != 1 {
+		t.Fatalf("expected 1 purged, got %d", len(purged))
 	}
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Fatal("trashed file should be gone after purge")
@@ -87,11 +87,11 @@ func TestTrash_PurgeSkipsWhenAutoPurgeDisabled(t *testing.T) {
 	_ = tr.Record(ctx, "lib", "/a", "/trash/a", "replace")
 	time.Sleep(10 * time.Millisecond)
 
-	n, err := tr.PurgeExpired(ctx)
+	purged, err := tr.PurgeExpired(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
+	if n := len(purged); n != 0 {
 		t.Fatalf("AutoPurge=false should purge nothing, got %d", n)
 	}
 }

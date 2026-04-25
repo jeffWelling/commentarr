@@ -80,7 +80,7 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	qbitClient := download.NewQBittorrent(download.QBittorrentConfig{
 		BaseURL: qbitSrv.URL, Username: "admin", Password: "pw", Name: "qbit-test",
 	})
-	picker := search.NewPicker(candRepo, jobs, qbitClient, "commentarr", 8)
+	picker := search.NewPicker(candRepo, jobs, qbitClient, nil, "commentarr", 8)
 
 	// === STAGE 1: search ===
 	processed, err := searcher.SearchDue(ctx, time.Now())
