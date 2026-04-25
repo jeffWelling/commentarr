@@ -58,7 +58,8 @@ func (r *titleRepo) Insert(ctx context.Context, t Title) error {
 		INSERT INTO titles
 		(id, kind, display_name, year, tmdb_id, imdb_id, series_id, season, episode, file_path)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, string(t.Kind), t.DisplayName, t.Year, t.TMDBID, t.IMDBID,
+		t.ID, string(t.Kind), t.DisplayName, t.Year,
+		nullableString(t.TMDBID), nullableString(t.IMDBID),
 		nullableString(t.SeriesID), nullableInt(t.Season), nullableInt(t.Episode), t.FilePath)
 	if err != nil {
 		return fmt.Errorf("insert title %s: %w", t.ID, err)
@@ -69,18 +70,24 @@ func (r *titleRepo) Insert(ctx context.Context, t Title) error {
 func (r *titleRepo) FindByID(ctx context.Context, id string) (Title, error) {
 	var t Title
 	var kind string
-	var series sql.NullString
+	// tmdb_id, imdb_id, series_id are nullable in the schema. Insert
+	// only stores empty strings via the value path, but a row created
+	// outside Insert (e.g., a manual sqlite3 seed, or a future API
+	// import) can carry real NULLs that explode a plain *string scan.
+	var tmdb, imdb, series sql.NullString
 	var season, episode sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, kind, display_name, year, tmdb_id, imdb_id,
 		       series_id, season, episode, file_path
 		FROM titles WHERE id = ?`, id).
-		Scan(&t.ID, &kind, &t.DisplayName, &t.Year, &t.TMDBID, &t.IMDBID,
+		Scan(&t.ID, &kind, &t.DisplayName, &t.Year, &tmdb, &imdb,
 			&series, &season, &episode, &t.FilePath)
 	if err != nil {
 		return Title{}, fmt.Errorf("find title %s: %w", id, err)
 	}
 	t.Kind = Kind(kind)
+	t.TMDBID = tmdb.String
+	t.IMDBID = imdb.String
 	t.SeriesID = series.String
 	t.Season = int(season.Int64)
 	t.Episode = int(episode.Int64)
@@ -104,13 +111,15 @@ func (r *titleRepo) List(ctx context.Context) ([]Title, error) {
 	for rows.Next() {
 		var t Title
 		var kind string
-		var series sql.NullString
+		var tmdb, imdb, series sql.NullString
 		var season, episode sql.NullInt64
-		if err := rows.Scan(&t.ID, &kind, &t.DisplayName, &t.Year, &t.TMDBID, &t.IMDBID,
+		if err := rows.Scan(&t.ID, &kind, &t.DisplayName, &t.Year, &tmdb, &imdb,
 			&series, &season, &episode, &t.FilePath); err != nil {
 			return nil, fmt.Errorf("scan title row: %w", err)
 		}
 		t.Kind = Kind(kind)
+		t.TMDBID = tmdb.String
+		t.IMDBID = imdb.String
 		t.SeriesID = series.String
 		t.Season = int(season.Int64)
 		t.Episode = int(episode.Int64)

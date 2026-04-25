@@ -48,6 +48,49 @@ func TestRepo_InsertAndFindByID(t *testing.T) {
 	}
 }
 
+// TestRepo_FindByID_NullExternalIDs guards against the SQL NULL scan
+// panic that surfaced during a real-world dry-run when a title was
+// seeded directly via sqlite3 (without going through Insert) and
+// tmdb_id / imdb_id / series_id were genuine NULLs. FindByID was
+// scanning into plain *string and exploding with "converting NULL to
+// string is unsupported." Insert now writes empty strings as NULL via
+// nullableString, and the read path uses sql.NullString for all three.
+func TestRepo_FindByID_NullExternalIDs(t *testing.T) {
+	r := newTestDB(t)
+	// Direct sqlite-level seed: emulate a title row created outside Insert.
+	if _, err := r.db.ExecContext(context.Background(), `
+		INSERT INTO titles (id, kind, display_name, year, file_path)
+		VALUES ('seed:1', 'movie', 'Direct Seed', 2020, '/x.mkv')`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.FindByID(context.Background(), "seed:1")
+	if err != nil {
+		t.Fatalf("FindByID with NULL external ids: %v", err)
+	}
+	if got.DisplayName != "Direct Seed" || got.TMDBID != "" || got.IMDBID != "" || got.SeriesID != "" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+// TestRepo_List_NullExternalIDs is the List-side counterpart of the
+// above. The same scan bug existed on List too.
+func TestRepo_List_NullExternalIDs(t *testing.T) {
+	r := newTestDB(t)
+	if _, err := r.db.ExecContext(context.Background(), `
+		INSERT INTO titles (id, kind, display_name, year, file_path)
+		VALUES ('seed:a', 'movie', 'A', 2020, '/a.mkv'),
+		       ('seed:b', 'movie', 'B', 2021, '/b.mkv')`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.List(context.Background())
+	if err != nil {
+		t.Fatalf("List with NULL external ids: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(got))
+	}
+}
+
 func TestRepo_FindByID_NotFound(t *testing.T) {
 	r := newTestDB(t)
 	_, err := r.FindByID(context.Background(), "nope")
