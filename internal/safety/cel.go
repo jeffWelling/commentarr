@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/google/cel-go/cel"
+
+	"github.com/jeffWelling/commentarr/internal/metrics"
 )
 
 // Action is what a failing rule does.
@@ -69,12 +71,16 @@ func EvaluateCEL(f Facts, rules []CompiledRule) Result {
 	for _, cr := range rules {
 		ok, err := cr.Compiled.Evaluate(f)
 		if err != nil {
+			metrics.SafetyRuleEvaluationsTotal.WithLabelValues(cr.Name, "fail").Inc()
 			r.Violations = append(r.Violations, Violation{Rule: cr.Name, Detail: err.Error()})
 			continue
 		}
 		if !ok {
+			metrics.SafetyRuleEvaluationsTotal.WithLabelValues(cr.Name, "fail").Inc()
 			r.Violations = append(r.Violations, Violation{Rule: cr.Name})
+			continue
 		}
+		metrics.SafetyRuleEvaluationsTotal.WithLabelValues(cr.Name, "pass").Inc()
 	}
 	return r
 }

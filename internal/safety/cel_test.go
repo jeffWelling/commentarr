@@ -1,6 +1,12 @@
 package safety
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jeffWelling/commentarr/internal/metrics"
+
+	dto "github.com/prometheus/client_model/go"
+)
 
 func TestCEL_CompileAndEvaluate_True(t *testing.T) {
 	rule, err := CompileRule("classifier_confidence >= 0.85")
@@ -42,6 +48,36 @@ func TestCEL_RejectsNonBoolExpression(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected type error for non-bool expression")
 	}
+}
+
+func TestEvaluateCEL_EmitsRuleEvaluationMetric(t *testing.T) {
+	passing, _ := CompileRule("classifier_confidence >= 0.0")
+	failing, _ := CompileRule("classifier_confidence >= 0.99")
+	rules := []CompiledRule{
+		{Name: "always_pass", Compiled: passing, Action: ActionLogOnly},
+		{Name: "high_bar", Compiled: failing, Action: ActionWarn},
+	}
+
+	beforePass := safetyCounter(t, "always_pass", "pass")
+	beforeFail := safetyCounter(t, "high_bar", "fail")
+
+	_ = EvaluateCEL(Facts{ClassifierConfidence: 0.5}, rules)
+
+	if got := safetyCounter(t, "always_pass", "pass"); got <= beforePass {
+		t.Errorf("expected pass counter to increment for always_pass; before=%v after=%v", beforePass, got)
+	}
+	if got := safetyCounter(t, "high_bar", "fail"); got <= beforeFail {
+		t.Errorf("expected fail counter to increment for high_bar; before=%v after=%v", beforeFail, got)
+	}
+}
+
+func safetyCounter(t *testing.T, rule, result string) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := metrics.SafetyRuleEvaluationsTotal.WithLabelValues(rule, result).Write(m); err != nil {
+		t.Fatal(err)
+	}
+	return m.GetCounter().GetValue()
 }
 
 func TestCEL_AllFieldsExposed(t *testing.T) {

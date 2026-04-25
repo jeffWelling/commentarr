@@ -149,6 +149,20 @@ var (
 		Help: "Safety rule violations, partitioned by rule name.",
 	}, []string{"rule_name"})
 
+	// SafetyRuleEvaluationsTotal counts CEL rule evaluations.
+	// result ∈ {pass, fail}
+	SafetyRuleEvaluationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_safety_rule_evaluations_total",
+		Help: "CEL safety rule evaluations.",
+	}, []string{"rule", "result"})
+
+	// SafetyCompileErrorsTotal counts CEL rules that fail to compile
+	// (typically at startup when ProfileRepo loads them).
+	SafetyCompileErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "commentarr_safety_compile_errors_total",
+		Help: "CEL safety rules that failed to compile.",
+	}, []string{"rule"})
+
 	// NonCompliantFilesTotal counts files that tripped validation.
 	NonCompliantFilesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "commentarr_non_compliant_files_total",

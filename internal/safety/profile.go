@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/jeffWelling/commentarr/internal/metrics"
 )
 
 // StoredRule is a CEL rule persisted in safety_rules.
@@ -129,6 +131,7 @@ func (p *ProfileRepo) CompiledRulesForLibrary(ctx context.Context, library strin
 		}
 		compiled, err := CompileRule(r.Expression)
 		if err != nil {
+			metrics.SafetyCompileErrorsTotal.WithLabelValues(r.Name).Inc()
 			return nil, fmt.Errorf("compile rule %s: %w", r.ID, err)
 		}
 		out = append(out, CompiledRule{Name: r.Name, Compiled: compiled, Action: r.Action})
