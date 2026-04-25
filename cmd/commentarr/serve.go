@@ -63,6 +63,9 @@ func serveCmd(args []string) error {
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
+	if err := validateServeFlags(*placementMode, *placementSeparate, *placementTrashDir); err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
 
 	d, err := db.Open(*dsn)
 	if err != nil {
@@ -162,6 +165,35 @@ func serveCmd(args []string) error {
 			return nil
 		}
 		return err
+	}
+}
+
+// validateServeFlags catches invalid flag combinations at startup
+// instead of letting the importer crash on the first download
+// completion. Each placement mode has different prerequisites:
+//
+//   - replace: must have a trash directory; we move originals there
+//     before swapping the new file in.
+//   - separate-library: must have an alt root; we copy under it.
+//   - sidecar: nothing extra — the new file lives next to the original.
+//
+// Unknown modes are also a startup-time error.
+func validateServeFlags(mode, separateRoot, trashDir string) error {
+	switch placer.Mode(mode) {
+	case placer.ModeSidecar:
+		return nil
+	case placer.ModeReplace:
+		if trashDir == "" {
+			return fmt.Errorf("placement-mode=replace requires -placement-trash-dir")
+		}
+		return nil
+	case placer.ModeSeparateLibrary:
+		if separateRoot == "" {
+			return fmt.Errorf("placement-mode=separate-library requires -placement-separate-root")
+		}
+		return nil
+	default:
+		return fmt.Errorf("placement-mode=%q not recognized (sidecar | replace | separate-library)", mode)
 	}
 }
 

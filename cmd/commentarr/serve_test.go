@@ -191,6 +191,29 @@ func TestStartWatcher_ReturnsBufferedChannel(t *testing.T) {
 	}
 }
 
+func TestValidateServeFlags(t *testing.T) {
+	cases := []struct {
+		name                              string
+		mode, separateRoot, trashDir       string
+		wantErr                           bool
+	}{
+		{"sidecar default", "sidecar", "", "", false},
+		{"replace without trash", "replace", "", "", true},
+		{"replace with trash", "replace", "", "/var/trash", false},
+		{"separate without root", "separate-library", "", "", true},
+		{"separate with root", "separate-library", "/alt", "", false},
+		{"unknown mode", "weird", "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateServeFlags(tc.mode, tc.separateRoot, tc.trashDir)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestBuildPickerTick_ProducesNamedTick(t *testing.T) {
 	c, _ := buildDownloadClient("http://qbit.test", "u", "p", "qbit")
 	d := newTestDB(t)
