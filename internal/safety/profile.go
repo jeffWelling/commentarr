@@ -51,6 +51,37 @@ func (p *ProfileRepo) SaveRule(ctx context.Context, r StoredRule) error {
 	return nil
 }
 
+// ListRules returns every stored rule, ordered by id. Powers the UI
+// listing.
+func (p *ProfileRepo) ListRules(ctx context.Context) ([]StoredRule, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, name, expression, action, enabled FROM safety_rules ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list rules: %w", err)
+	}
+	defer rows.Close()
+	var out []StoredRule
+	for rows.Next() {
+		var r StoredRule
+		var action string
+		if err := rows.Scan(&r.ID, &r.Name, &r.Expression, &action, &r.Enabled); err != nil {
+			return nil, err
+		}
+		r.Action = Action(action)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteRule removes a rule by id.
+func (p *ProfileRepo) DeleteRule(ctx context.Context, id string) error {
+	_, err := p.db.ExecContext(ctx, `DELETE FROM safety_rules WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete rule %s: %w", id, err)
+	}
+	return nil
+}
+
 // GetRule returns a rule by id.
 func (p *ProfileRepo) GetRule(ctx context.Context, id string) (StoredRule, error) {
 	var r StoredRule

@@ -58,6 +58,40 @@ func (r *Repo) SaveSubscriber(ctx context.Context, s Subscriber) error {
 	return nil
 }
 
+// ListAll returns every subscriber (enabled + disabled), ordered by id.
+// Powers the UI listing.
+func (r *Repo) ListAll(ctx context.Context) ([]Subscriber, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, name, url, events_json, COALESCE(basic_user,''), COALESCE(basic_pass,''), headers_json, enabled
+		FROM webhooks ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list subscribers: %w", err)
+	}
+	defer rows.Close()
+	var out []Subscriber
+	for rows.Next() {
+		var s Subscriber
+		var eventsJSON, headersJSON string
+		if err := rows.Scan(&s.ID, &s.Name, &s.URL, &eventsJSON,
+			&s.BasicUser, &s.BasicPass, &headersJSON, &s.Enabled); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(eventsJSON), &s.Events)
+		_ = json.Unmarshal([]byte(headersJSON), &s.Headers)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// Delete removes a subscriber by id. No error if the row doesn't exist.
+func (r *Repo) Delete(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM webhooks WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete subscriber %s: %w", id, err)
+	}
+	return nil
+}
+
 // SubscribersFor returns enabled subscribers interested in event.
 func (r *Repo) SubscribersFor(ctx context.Context, event Event) ([]Subscriber, error) {
 	rows, err := r.db.QueryContext(ctx, `

@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, APIError } from '../api/client'
 
@@ -20,9 +20,28 @@ const EXAMPLES = [
   { name: 'Magic-byte check', expression: 'file_magic_matches_extension == true' },
 ]
 
+const ACTIONS = ['block_replace', 'block_import', 'warn', 'log_only'] as const
+
+type Rule = {
+  ID: string
+  Name: string
+  Expression: string
+  Action: typeof ACTIONS[number]
+  Enabled: boolean
+}
+
 export function Safety() {
+  const qc = useQueryClient()
+  const [id, setId] = useState('default')
+  const [name, setName] = useState('default')
   const [expr, setExpr] = useState('classifier_confidence >= 0.85')
+  const [action, setAction] = useState<typeof ACTIONS[number]>('block_replace')
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  const list = useQuery<{ rules: Rule[] | null }>({
+    queryKey: ['safety-rules'],
+    queryFn: () => api.get('/api/v1/safety/rules'),
+  })
 
   const validate = useMutation({
     mutationFn: (expression: string) =>
@@ -35,6 +54,30 @@ export function Safety() {
       }),
   })
 
+  const save = useMutation({
+    mutationFn: () =>
+      api.post('/api/v1/safety/rules', {
+        ID: id, Name: name, Expression: expr, Action: action, Enabled: true,
+      }),
+    onSuccess: () => {
+      setFeedback({ kind: 'ok', text: 'saved' })
+      qc.invalidateQueries({ queryKey: ['safety-rules'] })
+    },
+    onError: (e: unknown) =>
+      setFeedback({
+        kind: 'err',
+        text: e instanceof APIError ? e.message : String(e),
+      }),
+  })
+
+  const del = useMutation({
+    mutationFn: (delID: string) =>
+      api.delete<void>(`/api/v1/safety/rules/${encodeURIComponent(delID)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['safety-rules'] }),
+  })
+
+  const rules = list.data?.rules ?? []
+
   return (
     <div className="space-y-6 max-w-5xl">
       <h1 className="text-3xl font-bold" style={{ fontVariationSettings: '"opsz" 144, "wght" 700' }}>
@@ -45,6 +88,42 @@ export function Safety() {
         expressions evaluated against the fact bundle. Expressions must return{' '}
         <code className="mono">bool</code>.
       </p>
+
+      {rules.length > 0 && (
+        <section>
+          <h2 className="text-sm uppercase tracking-widest text-[color:var(--fg-2)] mb-2">
+            registered rules
+          </h2>
+          <ul className="space-y-2">
+            {rules.map((r) => (
+              <li
+                key={r.ID}
+                className="rounded-lg border border-[color:var(--bg-2)] bg-[color:var(--bg-1)] p-3 flex items-start gap-3"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-semibold">{r.Name}</span>
+                    <span className="mono text-xs text-[color:var(--fg-2)]">{r.ID}</span>
+                    <span className="mono text-xs px-2 py-0.5 rounded-md bg-[color:var(--bg-2)] text-[color:var(--fg-1)]">
+                      {r.Action}
+                    </span>
+                  </div>
+                  <div className="mono text-xs text-[color:var(--fg-1)] mt-1 break-all">
+                    {r.Expression}
+                  </div>
+                </div>
+                <button
+                  onClick={() => del.mutate(r.ID)}
+                  className="text-sm text-[color:var(--error)] hover:underline shrink-0"
+                  disabled={del.isPending}
+                >
+                  delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section>
         <h2 className="text-sm uppercase tracking-widest text-[color:var(--fg-2)] mb-2">
@@ -67,6 +146,36 @@ export function Safety() {
       </section>
 
       <section className="space-y-3">
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs text-[color:var(--fg-2)] mb-1">id</label>
+            <input
+              value={id}
+              onChange={(e) => setId(e.target.value)}
+              className="mono w-full rounded-md bg-[color:var(--bg-0)] border border-[color:var(--bg-2)] px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-[color:var(--fg-2)] mb-1">name</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full rounded-md bg-[color:var(--bg-0)] border border-[color:var(--bg-2)] px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-[color:var(--fg-2)] mb-1">action</label>
+            <select
+              value={action}
+              onChange={(e) => setAction(e.target.value as typeof ACTIONS[number])}
+              className="mono w-full rounded-md bg-[color:var(--bg-0)] border border-[color:var(--bg-2)] px-3 py-2 text-sm"
+            >
+              {ACTIONS.map((a) => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          </div>
+        </div>
         <textarea
           value={expr}
           onChange={(e) => {
@@ -80,9 +189,16 @@ export function Safety() {
           <button
             onClick={() => validate.mutate(expr)}
             disabled={validate.isPending || !expr.trim()}
-            className="rounded-md bg-[color:var(--accent)] text-[color:var(--bg-0)] font-semibold px-4 py-2 disabled:opacity-40 hover:bg-[color:var(--accent-dim)]"
+            className="rounded-md border border-[color:var(--bg-2)] px-4 py-2 text-sm hover:border-[color:var(--accent)]"
           >
             {validate.isPending ? 'checking…' : 'validate'}
+          </button>
+          <button
+            onClick={() => save.mutate()}
+            disabled={save.isPending || !expr.trim() || !id.trim()}
+            className="rounded-md bg-[color:var(--accent)] text-[color:var(--bg-0)] font-semibold px-4 py-2 disabled:opacity-40 hover:bg-[color:var(--accent-dim)]"
+          >
+            {save.isPending ? 'saving…' : 'save rule'}
           </button>
           {feedback && (
             <span

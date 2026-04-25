@@ -16,9 +16,34 @@ type SafetyHandler struct {
 // NewSafetyHandler returns a SafetyHandler.
 func NewSafetyHandler(repo *safety.ProfileRepo) *SafetyHandler {
 	h := &SafetyHandler{repo: repo, r: chi.NewRouter()}
+	h.r.Get("/rules", h.listRules)
 	h.r.Post("/rules/validate", h.validateRule)
 	h.r.Post("/rules", h.saveRule)
+	h.r.Delete("/rules/{id}", h.deleteRule)
 	return h
+}
+
+// listRules returns every stored rule.
+func (h *SafetyHandler) listRules(w http.ResponseWriter, r *http.Request) {
+	rules, err := h.repo.ListRules(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rules == nil {
+		rules = []safety.StoredRule{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
+}
+
+// deleteRule removes a stored rule.
+func (h *SafetyHandler) deleteRule(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.repo.DeleteRule(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SafetyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.r.ServeHTTP(w, r) }
