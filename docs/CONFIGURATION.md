@@ -181,8 +181,8 @@ for the full set; key groups:
 ## Metrics
 
 Commentarr exposes Prometheus metrics at `/metrics`. The full catalogue
-lives in [`docs/METRICS.md`](METRICS.md) (to be written — tracked as
-`project.metrics_docs` in OPEN_QUESTIONS). For now, notable counters:
+with promql recipes lives in [`docs/METRICS.md`](METRICS.md). Notable
+counters:
 
 | Metric | Labels | Meaning |
 |---|---|---|
