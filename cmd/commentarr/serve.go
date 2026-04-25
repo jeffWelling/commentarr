@@ -227,6 +227,7 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 	s.Mount("/api/v1/wanted", authMW(v1.NewWantedHandler(q, candRepo)))
 	s.Mount("/api/v1/indexers", authMW(v1.NewIndexerHandler(conn.indexers)))
 	s.Mount("/api/v1/download-clients", authMW(v1.NewDownloadHandler(conn.downloadClients)))
+	s.Mount("/api/v1/jobs", authMW(v1.NewJobsHandler(download.NewJobRepo(d))))
 	s.Mount("/api/v1/trash", authMW(v1.NewTrashHandler(trashRepo)))
 	s.Mount("/api/v1/safety", authMW(v1.NewSafetyHandler(safetyRepo)))
 	s.Mount("/api/v1/webhooks", authMW(v1.NewWebhooksHandler(webhookRepo, dispatcher)))

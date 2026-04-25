@@ -8,6 +8,7 @@ import { Trash } from './pages/Trash'
 import { Safety } from './pages/Safety'
 import { Webhooks } from './pages/Webhooks'
 import { Connections } from './pages/Connections'
+import { Downloads } from './pages/Downloads'
 import { clearAPIKey, getAPIKey } from './api/client'
 
 const qc = new QueryClient({
@@ -28,6 +29,7 @@ function NavBar() {
     ['/', 'Dashboard'],
     ['/wanted', 'Wanted'],
     ['/connections', 'Connections'],
+    ['/downloads', 'Downloads'],
     ['/trash', 'Trash'],
     ['/safety', 'Safety'],
     ['/webhooks', 'Webhooks'],
@@ -87,6 +89,7 @@ export default function App() {
           <Route path="/" element={<RequireAuth><Shell><Dashboard /></Shell></RequireAuth>} />
           <Route path="/wanted" element={<RequireAuth><Shell><Wanted /></Shell></RequireAuth>} />
           <Route path="/connections" element={<RequireAuth><Shell><Connections /></Shell></RequireAuth>} />
+          <Route path="/downloads" element={<RequireAuth><Shell><Downloads /></Shell></RequireAuth>} />
           <Route path="/trash" element={<RequireAuth><Shell><Trash /></Shell></RequireAuth>} />
           <Route path="/safety" element={<RequireAuth><Shell><Safety /></Shell></RequireAuth>} />
           <Route path="/webhooks" element={<RequireAuth><Shell><Webhooks /></Shell></RequireAuth>} />

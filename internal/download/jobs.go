@@ -104,6 +104,35 @@ func (r *JobRepo) ListByStatus(ctx context.Context, status string) ([]Job, error
 	return out, rows.Err()
 }
 
+// ListRecent returns jobs newest-first, capped at limit. Useful for
+// the UI's downloads page where we want a flat activity stream.
+// Pass limit<=0 to get a sane default (50).
+func (r *JobRepo) ListRecent(ctx context.Context, limit int) ([]Job, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	// Tie-break on id DESC because added_at is one-second resolution in
+	// SQLite — three picker submissions in the same second would
+	// otherwise appear in arbitrary order.
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, client_name, client_job_id, title_id, release_title, edition,
+		       added_at, imported_at, status, outcome
+		FROM download_jobs ORDER BY added_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }

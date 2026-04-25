@@ -104,6 +104,39 @@ func TestJobRepo_ListByStatus(t *testing.T) {
 	}
 }
 
+func TestJobRepo_ListRecentReturnsNewestFirst(t *testing.T) {
+	repo := newTestJobRepo(t)
+	for _, jid := range []string{"first", "second", "third"} {
+		_, _ = repo.Save(context.Background(), Job{
+			ClientName: "qbit", ClientJobID: jid, TitleID: "t",
+		})
+	}
+	got, err := repo.ListRecent(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3, got %d", len(got))
+	}
+	if got[0].ClientJobID != "third" || got[2].ClientJobID != "first" {
+		t.Errorf("expected newest-first ordering, got %v / %v / %v",
+			got[0].ClientJobID, got[1].ClientJobID, got[2].ClientJobID)
+	}
+}
+
+func TestJobRepo_ListRecentRespectsLimit(t *testing.T) {
+	repo := newTestJobRepo(t)
+	for i := 0; i < 5; i++ {
+		_, _ = repo.Save(context.Background(), Job{
+			ClientName: "qbit", ClientJobID: "j" + string(rune('0'+i)), TitleID: "t",
+		})
+	}
+	got, _ := repo.ListRecent(context.Background(), 2)
+	if len(got) != 2 {
+		t.Fatalf("expected 2, got %d", len(got))
+	}
+}
+
 func newTestJobRepo(t *testing.T) *JobRepo {
 	t.Helper()
 	dir := t.TempDir()

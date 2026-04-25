@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jeffWelling/commentarr/internal/db"
+	"github.com/jeffWelling/commentarr/internal/download"
 	"github.com/jeffWelling/commentarr/internal/queue"
 	"github.com/jeffWelling/commentarr/internal/safety"
 	"github.com/jeffWelling/commentarr/internal/search"
@@ -84,6 +85,45 @@ func TestWanted_GETReturnsOnlyWanted(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	if len(out.Wanted) != 1 || out.Wanted[0].TitleID != "a" {
 		t.Fatalf("unexpected wanted: %+v", out.Wanted)
+	}
+}
+
+func TestJobs_GETReturnsEmptyWhenNoRepo(t *testing.T) {
+	h := NewJobsHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"jobs":[]`) {
+		t.Fatalf("expected empty list body, got %s", w.Body.String())
+	}
+}
+
+func TestJobs_GETReturnsRecentJobs(t *testing.T) {
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	_ = db.Migrate(d, "../../../migrations")
+	repo := download.NewJobRepo(d)
+	for _, jid := range []string{"a", "b", "c"} {
+		_, _ = repo.Save(context.Background(), download.Job{
+			ClientName: "qbit", ClientJobID: jid, TitleID: "t",
+			ReleaseTitle: "movie " + jid,
+		})
+	}
+	h := NewJobsHandler(repo)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{`"client_job_id":"a"`, `"client_job_id":"b"`, `"client_job_id":"c"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("response missing %s; body=%s", want, body)
+		}
 	}
 }
 
