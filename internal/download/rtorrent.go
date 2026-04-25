@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -143,14 +142,13 @@ func (r *RTorrent) ListByCategory(ctx context.Context, cat string) ([]Status, er
 	return nil, nil
 }
 
-// Remove issues d.erase.
+// Remove issues d.erase. rTorrent's erase semantics differ from other
+// clients — d.erase removes the torrent metadata but doesn't take a
+// "delete files on disk" flag; what's left on disk depends on
+// rTorrent's session config. The deleteFiles arg is accepted for
+// interface parity but ignored.
 func (r *RTorrent) Remove(ctx context.Context, id string, deleteFiles bool) error {
+	_ = deleteFiles
 	_, err := r.call(ctx, "d.erase", strVal(id))
-	_ = deleteFiles // rTorrent's erase semantics differ; stub for v1
 	return err
 }
-
-// ensureInt is a helper used by the string→int parser. Not currently
-// consumed but kept to document the expected response shape for a
-// future richer parser.
-var _ = strconv.Atoi

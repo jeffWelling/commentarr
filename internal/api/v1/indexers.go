@@ -7,8 +7,9 @@ import (
 )
 
 // IndexerInfo is the snapshot returned by GET /indexers. Richer status
-// (rate-limit tokens, circuit state) would come from scraping metrics;
-// Plan 4 ships the minimum and Plan 5 can deepen it.
+// (rate-limit tokens, circuit state) is available via Prometheus —
+// see commentarr_indexer_circuit_state and the indexer_queries_total
+// series in docs/METRICS.md.
 type IndexerInfo struct {
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
@@ -16,8 +17,9 @@ type IndexerInfo struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// IndexerHandler exposes /api/v1/indexers. For Plan 4 it returns the
-// statically-configured list the serve command passes in.
+// IndexerHandler exposes /api/v1/indexers as a read-only list of the
+// statically-configured indexers serve was launched with. CRUD lives
+// behind a future DB-backed registry.
 type IndexerHandler struct {
 	list []IndexerInfo
 	r    *chi.Mux

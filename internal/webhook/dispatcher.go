@@ -18,9 +18,10 @@ type DispatcherConfig struct {
 	Timeout      time.Duration
 }
 
-// Dispatcher fan-outs events to configured subscribers synchronously.
-// Plan 4's serve loop will convert this to an async queue; for Plan 3
-// we keep it simple and blocking.
+// Dispatcher fans events out to configured subscribers synchronously.
+// Synchronous matches the *arr baseline — operators expect the call
+// that triggered the event to wait for a 200 from the receiver.
+// Async queueing belongs behind a separate config flag if it ever lands.
 type Dispatcher struct {
 	repo *Repo
 	cfg  DispatcherConfig
