@@ -7,11 +7,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// ReadinessCheck reports whether one component is ready. A non-nil
+// error means the check failed and the request returned 503.
+type ReadinessCheck func(ctx context.Context) error
 
 // Config configures the server.
 type Config struct {
@@ -26,6 +32,9 @@ type Server struct {
 	cfg    Config
 	router *chi.Mux
 	httpS  *http.Server
+
+	checksMu sync.RWMutex
+	checks   map[string]ReadinessCheck
 }
 
 // New returns a Server with the default observability stack + built-in
@@ -50,25 +59,84 @@ func New(cfg Config) *Server {
 	r.Use(loggingMiddleware)
 	r.Use(metricsMiddleware)
 
+	s := &Server{
+		cfg:    cfg,
+		router: r,
+		checks: map[string]ReadinessCheck{},
+	}
+	s.httpS = &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      r,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+	}
+
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("ok"))
 	})
-	r.Get("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte("ready"))
-	})
+	r.Get("/readyz", s.readiness)
 	r.Handle("/metrics", promhttp.Handler())
 
-	return &Server{
-		cfg:    cfg,
-		router: r,
-		httpS: &http.Server{
-			Addr:         cfg.Addr,
-			Handler:      r,
-			ReadTimeout:  cfg.ReadTimeout,
-			WriteTimeout: cfg.WriteTimeout,
-		},
+	return s
+}
+
+// RegisterReadinessCheck attaches a named check to /readyz. Checks
+// run concurrently per request; a single failing check returns 503
+// with a body listing the failures by name. With no checks
+// registered, /readyz returns 200 "ready" (preserving the previous
+// always-ready semantics for tests + bootstrap).
+func (s *Server) RegisterReadinessCheck(name string, fn ReadinessCheck) {
+	s.checksMu.Lock()
+	defer s.checksMu.Unlock()
+	s.checks[name] = fn
+}
+
+func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
+	s.checksMu.RLock()
+	checks := make(map[string]ReadinessCheck, len(s.checks))
+	for k, v := range s.checks {
+		checks[k] = v
+	}
+	s.checksMu.RUnlock()
+
+	if len(checks) == 0 {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("ready"))
+		return
+	}
+
+	type result struct {
+		name string
+		err  error
+	}
+	out := make(chan result, len(checks))
+	var wg sync.WaitGroup
+	for name, fn := range checks {
+		wg.Add(1)
+		go func(name string, fn ReadinessCheck) {
+			defer wg.Done()
+			out <- result{name: name, err: fn(r.Context())}
+		}(name, fn)
+	}
+	wg.Wait()
+	close(out)
+
+	var failures []string
+	for res := range out {
+		if res.err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", res.name, res.err))
+		}
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	if len(failures) == 0 {
+		_, _ = w.Write([]byte("ready"))
+		return
+	}
+	sort.Strings(failures)
+	w.WriteHeader(http.StatusServiceUnavailable)
+	for _, line := range failures {
+		_, _ = fmt.Fprintln(w, line)
 	}
 }
 

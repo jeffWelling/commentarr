@@ -82,6 +82,11 @@ func serveCmd(args []string) error {
 	}
 
 	server := httpserver.New(httpserver.Config{Addr: *addr})
+	server.RegisterReadinessCheck("database", func(c context.Context) error {
+		ctx, cancel := context.WithTimeout(c, 2*time.Second)
+		defer cancel()
+		return d.PingContext(ctx)
+	})
 	broker := sse.NewBroker()
 	authMW := auth.NewMiddleware(authRepo, auth.MiddlewareConfig{
 		LocalBypassCIDRs: splitCIDRs(*bypassCIDR),

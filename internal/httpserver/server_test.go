@@ -31,6 +31,44 @@ func TestNew_ServesReadyz(t *testing.T) {
 	}
 }
 
+func TestReadyz_FailsWhenAnyCheckFails(t *testing.T) {
+	s := New(Config{})
+	s.RegisterReadinessCheck("ok-check", func(context.Context) error { return nil })
+	s.RegisterReadinessCheck("bad-check", func(context.Context) error {
+		return errExample
+	})
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "bad-check") {
+		t.Fatalf("expected failing check name in body, got %q", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "ok-check") {
+		t.Fatalf("passing check should not appear in failure body, got %q", w.Body.String())
+	}
+}
+
+func TestReadyz_AllChecksPassReturns200(t *testing.T) {
+	s := New(Config{})
+	s.RegisterReadinessCheck("a", func(context.Context) error { return nil })
+	s.RegisterReadinessCheck("b", func(context.Context) error { return nil })
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+var errExample = &readinessTestErr{msg: "db unreachable"}
+
+type readinessTestErr struct{ msg string }
+
+func (e *readinessTestErr) Error() string { return e.msg }
+
 func TestNew_ServesMetrics(t *testing.T) {
 	s := New(Config{})
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
