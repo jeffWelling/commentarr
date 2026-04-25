@@ -75,7 +75,7 @@ duration_seconds                  double    ffprobe container duration
 - **`block_replace`** — import proceeds but forces `sidecar` placement
   instead of `replace`. Original is preserved. This is the default
   action when you want "be safer than my configured placement mode."
-- **`warn`** — import proceeds normally, but an `import.verdict_degraded`
+- **`warn`** — import proceeds normally, but an `OnSafetyViolation`
   webhook fires and the rule is recorded on the title's audit log.
 - **`log_only`** — identical to `warn` minus the webhook. Useful while
   tuning a new rule.
@@ -150,14 +150,15 @@ commentarr_safety_compile_errors_total{rule="…"}
 
 ### Debugging
 
-The `import.rejected` webhook payload includes the full list of
+The `OnSafetyViolation` webhook payload includes the full list of
 violations:
 
 ```json
 {
-  "event": "import.rejected",
-  "timestamp": "2026-04-23T22:15:00Z",
-  "data": {
+  "event_type": "OnSafetyViolation",
+  "timestamp": "2026-04-25T22:15:00Z",
+  "version": "1",
+  "payload": {
     "title_id": "abc123",
     "release_title": "The.Departed.2006.Criterion.BluRay.1080p.x264-FOO",
     "violations": [

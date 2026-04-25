@@ -143,19 +143,36 @@ See [`SAFETY_RULES_REFERENCE.md`](SAFETY_RULES_REFERENCE.md).
 ### Webhooks
 
 Register URLs to receive events. Dispatcher retries failed deliveries
-with exponential backoff. Supported events:
+with exponential backoff. Naming follows the *arr baseline (`OnX`):
 
-```
-title.discovered    title.commentary_confirmed
-search.run          search.candidate_found
-download.queued     download.completed   download.failed
-import.placed       import.rejected      import.verdict_degraded
-trash.added         trash.purged
+| Event | Fires when |
+|---|---|
+| `OnSearch`          | A search pass runs against an indexer. |
+| `OnGrab`            | The picker hands a release to the download client. |
+| `OnDownload`        | A download reaches a terminal state. |
+| `OnImport`          | The importer places a file. |
+| `OnReplace`         | A replace-mode import swaps an original out. |
+| `OnTrash`           | A file is moved to trash. |
+| `OnTrashExpire`     | The auto-purge ticker removes an aged trash item. |
+| `OnRestore`         | A trash item is restored to the library. |
+| `OnVerifyFail`      | Title-regex verification rejects a release. |
+| `OnSafetyViolation` | A safety rule fails (built-in or CEL). |
+| `OnHealthIssue`     | Future: degraded subsystem (indexer circuit open, etc). |
+| `OnTest`            | Manually fired from the UI to verify a webhook. |
+
+Every payload uses the same envelope:
+
+```json
+{
+  "event_type": "OnImport",
+  "timestamp": "2026-04-25T16:30:00Z",
+  "version": "1",
+  "payload": { ... }
+}
 ```
 
-Every webhook payload has `event`, `timestamp`, and `data` keys. Events
-are versioned — future payload changes will bump a `v` field inside
-`data`.
+The `payload` shape varies per event. `version` is `"1"` today;
+breaking changes bump it.
 
 ## Helm values (summary)
 
