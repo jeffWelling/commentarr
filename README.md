@@ -64,8 +64,20 @@ go build ./cmd/commentarr
 | `commentarr search` | Run the Prowlarr search loop against titles due for a re-check. |
 | `commentarr import` | Run the post-download pipeline against a single file. |
 | `commentarr serve`  | Start the HTTP + SSE daemon (UI, REST API, Prometheus `/metrics`). |
+| `commentarr version`| Print version + commit + Go version. |
 
 Each exposes its flags via `-h`. Full reference in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
+Two flags worth knowing about for first-deploy testing:
+
+- **`-dry-run`** turns the daemon into a read-mostly observer:
+  picker logs what it *would* queue, watcher polls without routing
+  events to the importer. Smoke-test against real services before
+  letting the real auto-pipeline take over.
+- **`-path-translate-from` + `-path-translate-to`** rewrite qBit's
+  save-path prefix so a daemon on one host can find files written
+  by qBit on another (e.g., daemon on Mac with SMB mount of qBit's
+  `/downloads` at `/Volumes/downloads`).
 
 ## Quickstart — Docker
 

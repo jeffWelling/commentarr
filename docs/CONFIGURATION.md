@@ -40,6 +40,12 @@ commentarr serve
   -placement-separate-root  alt library root        default ""   (required for separate-library)
   -placement-trash-dir      trash directory         default ""   (required for replace)
   -confidence-min    auto-import classifier gate    default 0.85
+  -dry-run           log picker + importer actions  default false
+                     without queueing or moving anything
+  -path-translate-from  rewrite this prefix         default ""
+                     in qBit save paths             (no translation)
+  -path-translate-to    ...to this prefix on the    default ""
+                     daemon's filesystem
 ```
 
 The in-process pipeline runs end-to-end when **all three** config
@@ -67,6 +73,44 @@ Disable any individual stage by leaving its credentials empty or
 setting its interval to 0. Disabled stages can be replaced with the
 matching CLI subcommands (`commentarr search`, `commentarr import`)
 running from cron.
+
+### Dry-run mode
+
+`-dry-run` turns the daemon into a read-mostly observer:
+
+- Search loop: runs unchanged (only writes candidates to the DB).
+- Picker: selects the best candidate, **logs** the magnet/score it
+  would submit, then skips `client.Add()` + `jobs.Save()`. The
+  `commentarr_picker_decisions_total{decision="dry_run"}` counter
+  increments instead of `queued`.
+- Watcher: still polls qBit (proves auth + listing work).
+- Importer consumer: replaced with a log-only drain — even
+  pre-existing job rows from a real run can't accidentally trigger
+  file moves.
+
+Used to smoke-test against real Prowlarr + qBit without queueing or
+modifying anything. Drop the flag for real operation.
+
+### Path translation (split-host deployments)
+
+When the daemon and qBit live on different filesystems — typical
+when the daemon runs on a workstation/Mac and qBit runs in a homelab
+container with `/downloads` volume-mounted from a NAS — qBit reports
+save paths that mean nothing to the daemon. Without translation, the
+importer can't find the completed file.
+
+`-path-translate-from` + `-path-translate-to` rewrite the configured
+prefix in `Status.SavePath` right before the importer runs. Example
+for "daemon on Mac with SMB mount, qBit in K8s":
+
+```
+-path-translate-from /downloads
+-path-translate-to /Volumes/downloads
+```
+
+In K8s deployments where both daemon + qBit see the same `/downloads`
+volume mount, leave both flags empty (the default). No behavior
+change unless explicitly opted in.
 
 Notes:
 
