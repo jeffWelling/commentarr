@@ -253,15 +253,22 @@ func toStatus(t qbitTorrent) Status {
 }
 
 // mapQBitState collapses qBit's rich state vocabulary into our enum.
+// qBit 5.x renamed pausedDL→stoppedDL and pausedUP→stoppedUP — both
+// vocabularies are accepted here so the watcher works against either.
+// stoppedUP / pausedUP are treated as Completed (the download IS
+// done; seeding is just paused) rather than Paused, so the importer
+// chain runs even if the operator has qBit configured to stop
+// seeding immediately at completion.
 func mapQBitState(s string) State {
 	switch s {
 	case "queuedDL", "checkingDL", "allocating":
 		return StateQueued
 	case "downloading", "stalledDL", "metaDL", "forcedDL":
 		return StateDownloading
-	case "uploading", "stalledUP", "forcedUP", "queuedUP", "checkingUP":
+	case "uploading", "stalledUP", "forcedUP", "queuedUP", "checkingUP",
+		"pausedUP", "stoppedUP":
 		return StateCompleted
-	case "pausedDL", "pausedUP":
+	case "pausedDL", "stoppedDL":
 		return StatePaused
 	case "error", "missingFiles", "unknown":
 		return StateError

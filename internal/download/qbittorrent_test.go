@@ -172,7 +172,14 @@ func TestState_qbitMapping(t *testing.T) {
 		"stalledDL":    StateDownloading,
 		"uploading":    StateCompleted,
 		"stalledUP":    StateCompleted,
+		// pausedUP is the qBit 4.x term for "download done, seeding paused".
+		// stoppedUP is the qBit 5.x rename. Both must trigger the importer
+		// chain — surfaced live when qBit 5.x reported stoppedUP at
+		// completion and the watcher misclassified it as StateOther.
+		"pausedUP":     StateCompleted,
+		"stoppedUP":    StateCompleted,
 		"pausedDL":     StatePaused,
+		"stoppedDL":    StatePaused,
 		"error":        StateError,
 		"missingFiles": StateError,
 		"somethingNew": StateOther,
