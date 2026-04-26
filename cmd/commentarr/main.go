@@ -48,6 +48,36 @@ func main() {
 	}
 }
 
+// buildLibrarySource picks the right adapter for the given -source
+// flag. Each source has its own required-flag set; missing args fail
+// fast with a flag-relative error message.
+func buildLibrarySource(source, libName, root, jfURL, jfAPIKey, jfUserID, plexURL, plexToken string) (library.LibrarySource, error) {
+	switch source {
+	case "filesystem":
+		if root == "" {
+			return nil, fmt.Errorf("scan: -root is required when -source=filesystem")
+		}
+		return library.NewFilesystemSource(libName, root), nil
+	case "jellyfin", "emby":
+		if jfURL == "" || jfAPIKey == "" || jfUserID == "" {
+			return nil, fmt.Errorf("scan: -jellyfin-url + -jellyfin-api-key + -jellyfin-user-id are required when -source=%s", source)
+		}
+		return library.NewJellyfinSource(library.JellyfinConfig{
+			BaseURL: jfURL, APIKey: jfAPIKey, UserID: jfUserID, Name: libName,
+			EmbyMode: source == "emby",
+		}), nil
+	case "plex":
+		if plexURL == "" || plexToken == "" {
+			return nil, fmt.Errorf("scan: -plex-url + -plex-token are required when -source=plex")
+		}
+		return library.NewPlexSource(library.PlexConfig{
+			BaseURL: plexURL, Token: plexToken, Name: libName,
+		}), nil
+	default:
+		return nil, fmt.Errorf("scan: unknown -source=%q (filesystem | jellyfin | emby | plex)", source)
+	}
+}
+
 // version is overridden at link time via -ldflags '-X main.version=...'.
 // "dev" is the in-tree default — release builds set the tag explicitly.
 var version = "dev"
@@ -77,7 +107,10 @@ func must(err error) {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
-  commentarr scan    -root <path>   -db <file>
+  commentarr scan    -source filesystem -root <path>   -db <file>
+                     -source jellyfin -jellyfin-url <url> -jellyfin-api-key <key> -jellyfin-user-id <id>
+                     -source plex -plex-url <url> -plex-token <token>
+                     [-skip-classify] [-limit N]
   commentarr search  -prowlarr-url <url> -prowlarr-api-key <key> -db <file>
   commentarr import  -new-file <path> -original <path> -title-id <id> -title <name> [-mode sidecar|replace|separate-library]
   commentarr serve   -addr :7878 -db commentarr.db [-local-bypass-cidr 127.0.0.0/8]
@@ -87,14 +120,25 @@ func usage() {
 func scan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
 	libName := fs.String("library", "local", "library name (used as metric label)")
-	root := fs.String("root", "", "filesystem root to scan (required)")
+	source := fs.String("source", "filesystem", "library source: filesystem | jellyfin | emby | plex")
+	root := fs.String("root", "", "filesystem root (required when -source=filesystem)")
+	jfURL := fs.String("jellyfin-url", "", "Jellyfin/Emby base URL (required when -source=jellyfin or emby)")
+	jfAPIKey := fs.String("jellyfin-api-key", "", "Jellyfin/Emby API key or access token")
+	jfUserID := fs.String("jellyfin-user-id", "", "Jellyfin/Emby user id (the Items endpoint is user-scoped)")
+	plexURL := fs.String("plex-url", "", "Plex base URL (required when -source=plex)")
+	plexToken := fs.String("plex-token", "", "Plex token (X-Plex-Token)")
 	dsn := fs.String("db", ":memory:", "SQLite DSN")
 	migrations := fs.String("migrations", "./migrations", "migrations directory")
+	skipClassify := fs.Bool("skip-classify", false, "populate the wanted queue without classifying — useful for first-deploy when the library is large or storage is slow (e.g., over VPN). Every title is marked wanted; subsequent runs without -skip-classify will fill in verdicts.")
+	limit := fs.Int("limit", 0, "stop after this many titles (0 = no limit). Useful for first-deploy smoke tests against a real library.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *root == "" {
-		return fmt.Errorf("scan: -root is required")
+
+	src, err := buildLibrarySource(*source, *libName, *root,
+		*jfURL, *jfAPIKey, *jfUserID, *plexURL, *plexToken)
+	if err != nil {
+		return err
 	}
 
 	d, err := db.Open(*dsn)
@@ -110,18 +154,28 @@ func scan(args []string) error {
 	q := queue.New(d)
 	cls := classify.NewPipelineClassifier()
 	svc := classify.NewService(repo, cls, "commentarr-plan1", *libName)
-	src := library.NewFilesystemSource(*libName, *root)
 
 	ctx := context.Background()
 	titles, err := src.List(ctx)
 	if err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
+	if *limit > 0 && len(titles) > *limit {
+		titles = titles[:*limit]
+	}
 
 	wanted := 0
 	for _, t := range titles {
 		if err := repo.Insert(ctx, t); err != nil {
 			log.Printf("insert %s: %v", t.ID, err)
+			continue
+		}
+		if *skipClassify {
+			if err := q.MarkWanted(ctx, t.ID); err != nil {
+				log.Printf("mark wanted %s: %v", t.ID, err)
+				continue
+			}
+			wanted++
 			continue
 		}
 		v, err := svc.ClassifyTitle(ctx, t)
