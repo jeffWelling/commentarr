@@ -18,11 +18,19 @@ type DispatcherConfig struct {
 	Timeout      time.Duration
 }
 
+// Observer is an in-process hook called once per Dispatch, regardless
+// of how many external HTTP subscribers exist. The SSE broker uses
+// this to fan events to browser clients even when no webhooks are
+// registered. Panics in observers are recovered so a bad observer
+// doesn't kill the dispatcher.
+type Observer func(event Event, payload map[string]interface{})
+
 // Dispatcher fans events out to configured subscribers synchronously.
 // Synchronous matches the *arr baseline — operators expect the call
 // that triggered the event to wait for a 200 from the receiver.
 // Async queueing belongs behind a separate config flag if it ever lands.
 type Dispatcher struct {
+	observers []Observer
 	repo *Repo
 	cfg  DispatcherConfig
 	hc   *http.Client
@@ -42,8 +50,23 @@ func NewDispatcher(repo *Repo, cfg DispatcherConfig) *Dispatcher {
 	return &Dispatcher{repo: repo, cfg: cfg, hc: &http.Client{Timeout: cfg.Timeout}}
 }
 
+// AddObserver registers an in-process hook called for every Dispatch.
+// Used by serve to bridge dispatched events to the SSE broker so
+// browser clients see live activity even when no external webhooks
+// are registered.
+func (d *Dispatcher) AddObserver(o Observer) {
+	d.observers = append(d.observers, o)
+}
+
 // Dispatch sends event to every enabled subscriber subscribed to event.
 func (d *Dispatcher) Dispatch(ctx context.Context, event Event, payload map[string]interface{}) error {
+	for _, o := range d.observers {
+		func(o Observer) {
+			defer func() { _ = recover() }()
+			o(event, payload)
+		}(o)
+	}
+
 	subs, err := d.repo.SubscribersFor(ctx, event)
 	if err != nil {
 		return err

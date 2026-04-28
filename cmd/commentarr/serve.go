@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -95,11 +96,22 @@ func serveCmd(args []string) error {
 		return d.PingContext(ctx)
 	})
 	broker := sse.NewBroker()
+	// brokerObserver bridges every webhook.Dispatch into an SSE event
+	// the browser can render in the Dashboard's recent-activity panel.
+	// Without this, broker.Publish was never called and the panel was
+	// silently always-empty.
+	brokerObserver := func(event webhook.Event, payload map[string]interface{}) {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+		broker.Publish(sse.Event{Kind: string(event), Payload: string(body)})
+	}
 	authMW := auth.NewMiddleware(authRepo, auth.MiddlewareConfig{
 		LocalBypassCIDRs: splitCIDRs(*bypassCIDR),
 	})
 
-	mountAPIV1(server, authMW, d, broker, serveConnections{
+	mountAPIV1(server, authMW, d, broker, brokerObserver, serveConnections{
 		indexers:        infoFromProwlarr(*prowlarrURL, *prowlarrName),
 		downloadClients: infoFromQbit(*qbitURL, *qbitName),
 		startedAt:       time.Now().UTC(),
@@ -113,7 +125,7 @@ func serveCmd(args []string) error {
 	defer cancel()
 
 	trashSvc := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
-	purgeDispatcher := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
+	purgeDispatcher := withBrokerObserver(webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}), brokerObserver)
 
 	// Assemble all ticks first; the daemon snapshots the slice on
 	// construction, so any append after daemon.New() is silently dropped.
@@ -145,7 +157,7 @@ func serveCmd(args []string) error {
 	dlClient, dlOK := buildDownloadClient(*qbitURL, *qbitUsername, *qbitPassword, *qbitName)
 
 	if dlOK && *pickerInterval > 0 {
-		ticks = append(ticks, buildPickerTick(d, dlClient, *watchCategory, *scoreThreshold, *pickerInterval, *dryRun))
+		ticks = append(ticks, buildPickerTick(d, dlClient, *watchCategory, *scoreThreshold, *pickerInterval, *dryRun, brokerObserver))
 		mode := ""
 		if *dryRun {
 			mode = " (dry-run)"
@@ -174,7 +186,7 @@ func serveCmd(args []string) error {
 				FilenameTemplate: *placementTemplate,
 				TrashDir:         *placementTrashDir,
 				SeparateRoot:     *placementSeparate,
-			}, *confidenceMin, pathTranslator(*pathTranslateFrom, *pathTranslateTo))
+			}, *confidenceMin, pathTranslator(*pathTranslateFrom, *pathTranslateTo), brokerObserver)
 			fmt.Printf("watcher+importer enabled: qbit=%q, category=%q, interval=%s\n",
 				*qbitName, *watchCategory, *watchInterval)
 			if *pathTranslateFrom != "" {
@@ -287,14 +299,14 @@ type serveConnections struct {
 	startedAt       time.Time
 }
 
-func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d *sql.DB, broker *sse.Broker, conn serveConnections) {
+func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d *sql.DB, broker *sse.Broker, brokerObserver webhook.Observer, conn serveConnections) {
 	titleRepo := title.NewRepo(d)
 	q := queue.New(d)
 	candRepo := search.NewRepo(d)
 	trashRepo := trash.NewRepo(d)
 	safetyRepo := safety.NewProfileRepo(d)
 	webhookRepo := webhook.NewRepo(d)
-	dispatcher := webhook.NewDispatcher(webhookRepo, webhook.DispatcherConfig{})
+	dispatcher := withBrokerObserver(webhook.NewDispatcher(webhookRepo, webhook.DispatcherConfig{}), brokerObserver)
 
 	s.Mount("/api/v1/library", authMW(v1.NewLibraryHandler(titleRepo)))
 	s.Mount("/api/v1/wanted", authMW(v1.NewWantedHandler(q, candRepo)))
@@ -384,9 +396,9 @@ func startWatcher(ctx context.Context, client download.DownloadClient, category 
 // every interval and queues the top likely-commentary candidate per
 // title via the Picker. Eligibility checks (existing in-flight job,
 // score threshold) live inside Picker.PickAndQueueOne.
-func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration, dryRun bool) daemon.Tick {
+func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration, dryRun bool, brokerObserver webhook.Observer) daemon.Tick {
 	picker := search.NewPicker(search.NewRepo(d), download.NewJobRepo(d), client,
-		webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}),
+		withBrokerObserver(webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}), brokerObserver),
 		category, threshold).WithDryRun(dryRun)
 	q := queue.New(d)
 	return daemon.Tick{
@@ -446,6 +458,17 @@ func drainEvents(ctx context.Context, events <-chan download.Event) {
 // logged — they're recoverable across restarts because the watcher
 // dedupe set is in-memory only, so a restart re-emits the same
 // completion event.
+// withBrokerObserver attaches the SSE-broker observer to a freshly-
+// constructed dispatcher. Used by every dispatcher constructed inside
+// serve so the Dashboard's recent-activity panel sees every event,
+// not just the ones sent over webhooks.
+func withBrokerObserver(d *webhook.Dispatcher, o webhook.Observer) *webhook.Dispatcher {
+	if o != nil {
+		d.AddObserver(o)
+	}
+	return d
+}
+
 // pathTranslator returns a func that rewrites the configured prefix in
 // a path. When from is empty, the returned func is the identity. Used
 // to bridge "qBit reports container paths, daemon sees a mounted
@@ -464,14 +487,14 @@ func pathTranslator(from, to string) func(string) string {
 	}
 }
 
-func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64, translatePath func(string) string) {
+func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64, translatePath func(string) string, brokerObserver webhook.Observer) {
 	jobs := download.NewJobRepo(d)
 	titles := title.NewRepo(d)
 	q := queue.New(d)
 	pl := placer.New(placeCfg)
 	cls := classify.NewService(titles, classify.NewPipelineClassifier(), "commentarr-serve", client.Name())
 	tr := trash.New(d, trash.Config{Retention: 28 * 24 * time.Hour, AutoPurge: true})
-	disp := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
+	disp := withBrokerObserver(webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}), brokerObserver)
 	imp := importer.New(importer.Deps{
 		Classify: cls, Placer: pl, Trash: tr, Webhook: disp,
 		SafetyCfg: safety.BuiltinConfig{

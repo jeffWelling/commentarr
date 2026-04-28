@@ -28,6 +28,48 @@ func newDispatcher(t *testing.T) (*Dispatcher, *Repo) {
 	return NewDispatcher(repo, DispatcherConfig{MaxAttempts: 3, RetryBackoff: 1 * time.Millisecond}), repo
 }
 
+// TestDispatcher_ObserverFiresEvenWithoutSubscribers pins the
+// behaviour the SSE broker depends on: the observer hook runs on
+// EVERY Dispatch, even when no external HTTP subscriber is
+// registered. Without this, the Dashboard's recent-activity panel
+// stays silent for any setup that doesn't have webhooks configured —
+// which is most setups.
+func TestDispatcher_ObserverFiresEvenWithoutSubscribers(t *testing.T) {
+	disp, _ := newDispatcher(t)
+	var got []Event
+	disp.AddObserver(func(e Event, _ map[string]interface{}) {
+		got = append(got, e)
+	})
+
+	if err := disp.Dispatch(context.Background(), EventImport, map[string]interface{}{"x": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != EventImport {
+		t.Fatalf("observer got %v, want [OnImport]", got)
+	}
+}
+
+// TestDispatcher_ObserverPanicDoesNotKillDispatcher: if a buggy
+// observer panics, subsequent observers + the HTTP-fan-out path
+// still run.
+func TestDispatcher_ObserverPanicDoesNotKillDispatcher(t *testing.T) {
+	disp, _ := newDispatcher(t)
+	disp.AddObserver(func(_ Event, _ map[string]interface{}) {
+		panic("oops")
+	})
+	var safeRan bool
+	disp.AddObserver(func(_ Event, _ map[string]interface{}) {
+		safeRan = true
+	})
+
+	if err := disp.Dispatch(context.Background(), EventImport, nil); err != nil {
+		t.Fatalf("dispatch should swallow observer panics: %v", err)
+	}
+	if !safeRan {
+		t.Fatal("second observer didn't run after first one panicked")
+	}
+}
+
 func TestDispatcher_DeliversSuccess(t *testing.T) {
 	var received Envelope
 	var mu sync.Mutex
