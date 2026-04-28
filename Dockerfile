@@ -3,14 +3,8 @@
 # Multi-stage, multi-arch (linux/amd64, linux/arm64). The web SPA is
 # built in a Node stage, copied into the Go source tree as web-dist,
 # and then compiled into the binary via go:embed. Runtime stage is
-# alpine + ffmpeg (provides ffprobe) + the binary only.
-#
-# Build context:
-#   The classifier module is a sibling checkout until it ships a tagged
-#   release. scripts/build-image.sh prepares a context with both
-#   commentarr/ and commentary-classifier/ side-by-side. Once the
-#   classifier is pinned in go.mod, this Dockerfile can be built from
-#   the repo root directly.
+# alpine + ffmpeg (provides ffprobe) + the binary only. Build from
+# the repo root: `docker build .`
 
 # syntax=docker/dockerfile:1.7
 
@@ -21,9 +15,9 @@ ARG ALPINE_VERSION=3.20
 # --- SPA build stage ---------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS web-build
 WORKDIR /web
-COPY commentarr/web/package.json commentarr/web/package-lock.json* ./
+COPY web/package.json web/package-lock.json* ./
 RUN npm ci --no-audit --no-fund
-COPY commentarr/web/ ./
+COPY web/ ./
 RUN npm run build
 
 # --- Go build stage ----------------------------------------------------
@@ -31,12 +25,10 @@ FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
-COPY commentary-classifier /src/commentary-classifier
-COPY commentarr /src/commentarr
+COPY . .
 # Overlay the freshly-built SPA into the Go embed directory so go:embed
 # picks it up regardless of whatever was committed.
-COPY --from=web-build /web/dist /src/commentarr/cmd/commentarr/web-dist
-WORKDIR /src/commentarr
+COPY --from=web-build /web/dist /src/cmd/commentarr/web-dist
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go mod download
@@ -56,7 +48,7 @@ RUN apk add --no-cache ffmpeg ca-certificates tini \
  && adduser  -S -u 65532 -G commentarr commentarr
 
 COPY --from=build /out/commentarr /usr/local/bin/commentarr
-COPY --from=build /src/commentarr/migrations /migrations
+COPY --from=build /src/migrations /migrations
 
 # Data dir is the sole writable mount Commentarr needs.
 RUN mkdir -p /data && chown -R 65532:65532 /data

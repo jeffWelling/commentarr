@@ -44,9 +44,9 @@ chart values — disabled stages can run as `commentarr search` /
 go build ./cmd/commentarr
 ```
 
-Requires a sibling checkout of [commentary-classifier](https://github.com/jeffWelling/commentary-classifier)
-at `../commentary-classifier` (see the `replace` directive in `go.mod`).
-The replace goes away once the classifier ships a tagged release.
+Pulls [commentary-classifier](https://github.com/jeffWelling/commentary-classifier)
+as a normal Go module (pinned in `go.mod`) — no sibling checkout
+required.
 
 For the web SPA:
 
