@@ -11,6 +11,9 @@
 ARG GO_VERSION=1.25
 ARG NODE_VERSION=20
 ARG ALPINE_VERSION=3.20
+# Set by the release workflow to the git tag (e.g. v0.1.0); leave "dev"
+# for in-tree builds.
+ARG VERSION=dev
 
 # --- SPA build stage ---------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS web-build
@@ -24,6 +27,7 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION
 WORKDIR /src
 COPY . .
 # Overlay the freshly-built SPA into the Go embed directory so go:embed
@@ -35,7 +39,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags='-s -w' -o /out/commentarr ./cmd/commentarr
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/commentarr ./cmd/commentarr
 
 # --- Runtime stage -----------------------------------------------------
 FROM alpine:${ALPINE_VERSION} AS runtime
