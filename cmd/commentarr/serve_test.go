@@ -13,8 +13,12 @@ import (
 	"github.com/jeffWelling/commentarr/internal/db"
 	"github.com/jeffWelling/commentarr/internal/download"
 	"github.com/jeffWelling/commentarr/internal/importer"
+	"github.com/jeffWelling/commentarr/internal/indexer"
 	"github.com/jeffWelling/commentarr/internal/queue"
+	"github.com/jeffWelling/commentarr/internal/search"
 	"github.com/jeffWelling/commentarr/internal/title"
+	"github.com/jeffWelling/commentarr/internal/verify"
+	"github.com/jeffWelling/commentarr/internal/webhook"
 )
 
 type stubImporter struct {
@@ -282,7 +286,7 @@ func TestBuildSearchTick_DisabledWhenProwlarrUnconfigured(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, ok := buildSearchTick(nil, tc.url, tc.key, "p", 6, 3, 8, tc.interval, 0)
+			_, ok := buildSearchTick(nil, tc.url, tc.key, "p", 6, 3, 8, tc.interval, 0, nil)
 			if ok {
 				t.Fatal("expected tick to be disabled")
 			}
@@ -316,6 +320,99 @@ func TestBuildDownloadClient_EnabledWhenQbitConfigured(t *testing.T) {
 	}
 	if c.Name() != "qbit" {
 		t.Errorf("name not propagated: %q", c.Name())
+	}
+}
+
+// detectUpgrades:
+// 1. Looks up the imported job's release_title for each given title.
+// 2. Re-scores it with verify.DefaultRules.
+// 3. Compares to the top likely-commentary candidate from the search
+//    repo.
+// 4. Fires OnUpgradeAvailable iff candidate.Score > current.Score.
+
+func TestDetectUpgrades_FiresWhenCandidateOutscoresImported(t *testing.T) {
+	d := newTestDB(t)
+	titles := title.NewRepo(d)
+	q := queue.New(d)
+	candRepo := search.NewRepo(d)
+	jobs := download.NewJobRepo(d)
+	ctx := context.Background()
+
+	_ = titles.Insert(ctx, title.Title{ID: "tt-brazil", Kind: title.KindMovie, DisplayName: "Brazil", Year: 1985, FilePath: "/x.mkv"})
+	_ = q.MarkResolved(ctx, "tt-brazil")
+	jobID, _ := jobs.Save(ctx, download.Job{
+		ClientName: "qbit", ClientJobID: "j1", TitleID: "tt-brazil",
+		// No "criterion" or "directors_cut" hits — score will be 0.
+		ReleaseTitle: "Brazil 1985 1080p WEB-DL",
+	})
+	_ = jobs.MarkStatus(ctx, jobID, "imported", "success")
+
+	// New candidate: criterion + DC + commentary → score 25.
+	_ = candRepo.SaveCandidates(ctx, "tt-brazil", []verify.Scored{{
+		Release:          indexer.Release{Title: "Brazil 1985 Criterion DC Commentary 1080p", InfoHash: "abc", Indexer: "TPB"},
+		Score:            25,
+		LikelyCommentary: true,
+	}})
+
+	disp := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
+	var got []webhook.Event
+	disp.AddObserver(func(e webhook.Event, _ map[string]interface{}) {
+		got = append(got, e)
+	})
+
+	detectUpgrades(ctx, d, []string{"tt-brazil"}, 8, disp)
+
+	if len(got) != 1 || got[0] != webhook.EventUpgradeAvailable {
+		t.Fatalf("expected one OnUpgradeAvailable, got %v", got)
+	}
+}
+
+func TestDetectUpgrades_SilentWhenNoBetterCandidate(t *testing.T) {
+	d := newTestDB(t)
+	titles := title.NewRepo(d)
+	q := queue.New(d)
+	candRepo := search.NewRepo(d)
+	jobs := download.NewJobRepo(d)
+	ctx := context.Background()
+
+	_ = titles.Insert(ctx, title.Title{ID: "tt-fixed", Kind: title.KindMovie, DisplayName: "Fixed", Year: 2020, FilePath: "/x.mkv"})
+	jobID, _ := jobs.Save(ctx, download.Job{
+		ClientName: "qbit", ClientJobID: "j1", TitleID: "tt-fixed",
+		// Imported release already has all the keywords → score 25.
+		ReleaseTitle: "Fixed 2020 Criterion DC Commentary 1080p",
+	})
+	_ = jobs.MarkStatus(ctx, jobID, "imported", "success")
+	_ = q.MarkResolved(ctx, "tt-fixed")
+
+	// New candidate ties at 25 — must not fire.
+	_ = candRepo.SaveCandidates(ctx, "tt-fixed", []verify.Scored{{
+		Release:          indexer.Release{Title: "Fixed 2020 Criterion DC Commentary 1080p Tigole", InfoHash: "x"},
+		Score:            25,
+		LikelyCommentary: true,
+	}})
+
+	disp := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
+	var fired bool
+	disp.AddObserver(func(e webhook.Event, _ map[string]interface{}) {
+		if e == webhook.EventUpgradeAvailable {
+			fired = true
+		}
+	})
+
+	detectUpgrades(ctx, d, []string{"tt-fixed"}, 8, disp)
+	if fired {
+		t.Fatal("equal-score candidate must not fire OnUpgradeAvailable")
+	}
+}
+
+func TestDetectUpgrades_SilentWhenNoImportedJob(t *testing.T) {
+	d := newTestDB(t)
+	disp := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
+	var fired bool
+	disp.AddObserver(func(_ webhook.Event, _ map[string]interface{}) { fired = true })
+	detectUpgrades(context.Background(), d, []string{"tt-orphan"}, 8, disp)
+	if fired {
+		t.Fatal("title with no imported job must not fire")
 	}
 }
 
@@ -407,7 +504,7 @@ func TestBuildPickerTick_ProducesNamedTick(t *testing.T) {
 
 func TestBuildSearchTick_EnabledWhenProwlarrConfigured(t *testing.T) {
 	d := newTestDB(t)
-	tick, ok := buildSearchTick(d, "http://prowlarr.test", "abc", "main", 6, 3, 8, time.Minute, 0)
+	tick, ok := buildSearchTick(d, "http://prowlarr.test", "abc", "main", 6, 3, 8, time.Minute, 0, nil)
 	if !ok {
 		t.Fatal("expected tick to be enabled")
 	}

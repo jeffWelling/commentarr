@@ -104,6 +104,22 @@ func (r *JobRepo) ListByStatus(ctx context.Context, status string) ([]Job, error
 	return out, rows.Err()
 }
 
+// LastImportedForTitle returns the most-recently-imported job for the
+// given title (the one whose release we're now living with), or
+// ErrJobNotFound. Used by the upgrade-detect path after a recheck:
+// we re-score the imported release_title and compare it to new
+// candidates to decide whether a higher-scored release is available.
+func (r *JobRepo) LastImportedForTitle(ctx context.Context, titleID string) (Job, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, client_name, client_job_id, title_id, release_title, edition,
+		       added_at, imported_at, status, outcome
+		FROM download_jobs
+		WHERE title_id = ? AND status = 'imported'
+		ORDER BY imported_at DESC, id DESC
+		LIMIT 1`, titleID)
+	return scanJob(row)
+}
+
 // HasInflightForTitle returns true when at least one non-errored job
 // (status in queued | completed | imported) covers the given title.
 // This is the picker's gate: a true result means "don't queue another

@@ -77,15 +77,15 @@ func (s *Searcher) SearchDue(ctx context.Context, now time.Time) (int, error) {
 // trigger a re-search storm.
 //
 // Q8B in OPEN_QUESTIONS.md.
-func (s *Searcher) RecheckResolved(ctx context.Context, now time.Time, interval time.Duration) (int, error) {
+func (s *Searcher) RecheckResolved(ctx context.Context, now time.Time, interval time.Duration) ([]string, error) {
 	if interval <= 0 {
-		return 0, nil
+		return nil, nil
 	}
 	due, err := s.queue.DueForRecheck(ctx, now)
 	if err != nil {
-		return 0, fmt.Errorf("due for recheck: %w", err)
+		return nil, fmt.Errorf("due for recheck: %w", err)
 	}
-	processed := 0
+	processed := make([]string, 0, len(due))
 	for _, e := range due {
 		if err := ctx.Err(); err != nil {
 			return processed, err
@@ -100,7 +100,7 @@ func (s *Searcher) RecheckResolved(ctx context.Context, now time.Time, interval 
 		if err := s.queue.UpdateNextRecheckAt(ctx, t.ID, now.Add(interval)); err != nil {
 			return processed, fmt.Errorf("advance next_recheck_at %s: %w", t.ID, err)
 		}
-		processed++
+		processed = append(processed, t.ID)
 	}
 	return processed, nil
 }

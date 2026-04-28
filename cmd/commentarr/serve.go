@@ -149,7 +149,7 @@ func serveCmd(args []string) error {
 		}},
 	}
 	if tick, ok := buildSearchTick(d, *prowlarrURL, *prowlarrAPIKey, *prowlarrName,
-		*prowlarrRPM, *prowlarrBurst, *scoreThreshold, *searchInterval, *recheckInterval); ok {
+		*prowlarrRPM, *prowlarrBurst, *scoreThreshold, *searchInterval, *recheckInterval, brokerObserver); ok {
 		ticks = append(ticks, tick)
 		fmt.Printf("search loop enabled: prowlarr=%q, interval=%s\n", *prowlarrName, *searchInterval)
 	}
@@ -330,7 +330,7 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 // missing) or the operator disabled it via interval=0. Logging is
 // minimal because each individual indexer call already emits metrics +
 // circuit-breaker logs at its own layer.
-func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold int, interval time.Duration, recheckInterval time.Duration) (daemon.Tick, bool) {
+func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold int, interval time.Duration, recheckInterval time.Duration, brokerObserver webhook.Observer) (daemon.Tick, bool) {
 	if url == "" || apiKey == "" || interval <= 0 {
 		return daemon.Tick{}, false
 	}
@@ -364,17 +364,79 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 				log.Printf("search tick: processed %d wanted titles", n)
 			}
 			if recheckInterval > 0 {
-				rn, err := searcher.RecheckResolved(c, now, recheckInterval)
+				rechecked, err := searcher.RecheckResolved(c, now, recheckInterval)
 				if err != nil {
 					log.Printf("recheck tick: %v", err)
 					return
 				}
-				if rn > 0 {
-					log.Printf("recheck tick: re-searched %d resolved titles", rn)
+				if len(rechecked) > 0 {
+					log.Printf("recheck tick: re-searched %d resolved titles", len(rechecked))
+					detectUpgrades(c, d, rechecked, threshold,
+						withBrokerObserver(webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}), brokerObserver))
 				}
 			}
 		},
 	}, true
+}
+
+// detectUpgrades walks the just-rechecked title IDs and fires
+// OnUpgradeAvailable for each one whose top likely-commentary
+// candidate now scores higher than the imported release does.
+//
+// "Higher" means strictly greater. Re-scoring is deterministic: the
+// imported job's stored release_title runs through the same
+// verify.DefaultRules the picker used originally, so a tie never
+// fires.
+//
+// Once-per-recheck-interval-per-title firing semantics: we only get
+// here for titles whose next_recheck_at just elapsed, and
+// RecheckResolved already advanced their recheck windows by
+// `interval` before returning. So no per-tick re-fire.
+func detectUpgrades(ctx context.Context, d *sql.DB, titleIDs []string, threshold int, dispatcher *webhook.Dispatcher) {
+	candRepo := search.NewRepo(d)
+	jobRepo := download.NewJobRepo(d)
+	rules := verify.DefaultRules()
+	for _, titleID := range titleIDs {
+		job, err := jobRepo.LastImportedForTitle(ctx, titleID)
+		if err != nil {
+			// No imported job for this title (or DB error). Recheck-detect
+			// can't say whether anything's an upgrade if we don't know
+			// what we're upgrading FROM. Silent skip.
+			continue
+		}
+		currentScore := verify.ScoreTitle(job.ReleaseTitle, 0, rules).Score
+
+		cands, err := candRepo.ListCandidates(ctx, titleID)
+		if err != nil {
+			log.Printf("upgrade-detect: ListCandidates %s: %v", titleID, err)
+			continue
+		}
+		var top *search.Candidate
+		for i := range cands {
+			c := &cands[i]
+			if !c.LikelyCommentary || c.Score < threshold {
+				continue
+			}
+			top = c
+			break // ListCandidates returns score DESC — the first qualifier wins
+		}
+		if top == nil || top.Score <= currentScore {
+			continue
+		}
+
+		log.Printf("upgrade-detect: %s — current %q score=%d, candidate %q score=%d (indexer=%s)",
+			titleID, job.ReleaseTitle, currentScore,
+			top.Release.Title, top.Score, top.Release.Indexer)
+		_ = dispatcher.Dispatch(ctx, webhook.EventUpgradeAvailable, map[string]interface{}{
+			"title_id":          titleID,
+			"current_release":   job.ReleaseTitle,
+			"current_score":     currentScore,
+			"candidate_release": top.Release.Title,
+			"candidate_score":   top.Score,
+			"candidate_indexer": top.Release.Indexer,
+			"candidate_infohash": top.Release.InfoHash,
+		})
+	}
 }
 
 // buildDownloadClient assembles a qBit adapter from flags. Returns

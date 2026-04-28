@@ -226,6 +226,7 @@ breaking changes bump it.
 | `OnTrash`           | A file is moved to trash (during placement). | `library`, `trashed_path` |
 | `OnTrashExpire`     | Auto-purge ticker removes an aged trash item. | `library`, `original_path`, `trashed_path`, `reason` |
 | `OnSafetyViolation` | A safety rule fails (built-in or CEL). | `title_id`, `violations` (array of `{rule, detail}`) |
+| `OnUpgradeAvailable`| Recheck of a resolved title surfaced a candidate that scores higher than the imported release. | `title_id`, `current_release`, `current_score` (int), `candidate_release`, `candidate_score` (int), `candidate_indexer`, `candidate_infohash` |
 | `OnTest`            | Manually fired from the UI to verify a webhook. | `message` (free-form string) |
 
 ### Events reserved but not yet emitted

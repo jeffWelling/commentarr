@@ -18,6 +18,17 @@ const (
 	EventSafetyViolation Event = "OnSafetyViolation"
 	EventHealthIssue     Event = "OnHealthIssue"
 	EventTest            Event = "OnTest"
+
+	// EventUpgradeAvailable fires when a periodic re-search of a
+	// resolved title turns up a candidate that scores higher than the
+	// release Commentarr already imported. The operator decides whether
+	// to grab the new release; Commentarr never auto-replaces a
+	// successfully-imported file.
+	//
+	// Payload (see CONFIGURATION.md):
+	//   title_id, current_release, current_score, candidate_release,
+	//   candidate_score, candidate_indexer.
+	EventUpgradeAvailable Event = "OnUpgradeAvailable"
 )
 
 // Envelope is the standard wrapper around every event payload.

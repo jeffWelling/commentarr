@@ -104,6 +104,67 @@ func TestJobRepo_ListByStatus(t *testing.T) {
 	}
 }
 
+func TestJobRepo_LastImportedForTitle_PicksMostRecent(t *testing.T) {
+	repo := newTestJobRepo(t)
+	ctx := context.Background()
+	id1, _ := repo.Save(ctx, Job{
+		ClientName: "qbit", ClientJobID: "old", TitleID: "tt-1",
+		ReleaseTitle: "Brazil 1985 BluRay x264-OFT",
+	})
+	_ = repo.MarkStatus(ctx, id1, "imported", "success")
+
+	// Wait so imported_at differs (CURRENT_TIMESTAMP is 1-second
+	// resolution in SQLite; the id-DESC tiebreak is what saves us).
+	id2, _ := repo.Save(ctx, Job{
+		ClientName: "qbit", ClientJobID: "newer", TitleID: "tt-1",
+		ReleaseTitle: "Brazil 1985 Criterion DC 1080p Tigole",
+	})
+	_ = repo.MarkStatus(ctx, id2, "imported", "success")
+
+	got, err := repo.LastImportedForTitle(ctx, "tt-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientJobID != "newer" {
+		t.Errorf("expected newest imported, got %+v", got)
+	}
+}
+
+func TestJobRepo_LastImportedForTitle_IgnoresQueued(t *testing.T) {
+	// A queued (not-yet-imported) job for the same title must not
+	// shadow an older actually-imported job.
+	repo := newTestJobRepo(t)
+	ctx := context.Background()
+
+	imported, _ := repo.Save(ctx, Job{
+		ClientName: "qbit", ClientJobID: "imp", TitleID: "tt-1",
+		ReleaseTitle: "imported release",
+	})
+	_ = repo.MarkStatus(ctx, imported, "imported", "success")
+
+	_, _ = repo.Save(ctx, Job{
+		ClientName: "qbit", ClientJobID: "newer-queued", TitleID: "tt-1",
+		ReleaseTitle: "still downloading",
+		// status defaults to "queued"
+	})
+
+	got, err := repo.LastImportedForTitle(ctx, "tt-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientJobID != "imp" {
+		t.Errorf("expected imported job, got %+v", got)
+	}
+}
+
+func TestJobRepo_LastImportedForTitle_NoneReturnsErr(t *testing.T) {
+	repo := newTestJobRepo(t)
+	_, err := repo.LastImportedForTitle(context.Background(), "tt-never-imported")
+	if !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("expected ErrJobNotFound, got %v", err)
+	}
+}
+
 func TestJobRepo_HasInflightForTitle(t *testing.T) {
 	repo := newTestJobRepo(t)
 	ctx := context.Background()
