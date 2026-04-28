@@ -319,6 +319,25 @@ func TestBuildDownloadClient_EnabledWhenQbitConfigured(t *testing.T) {
 	}
 }
 
+func TestHumanBytes(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0B"},
+		{512, "512B"},
+		{1024, "1.0KB"},
+		{1536, "1.5KB"},
+		{9_890_461_368, "9.2GB"}, // the Brazil case from the live homelab run
+		{2 * 1024 * 1024 * 1024 * 1024, "2.0TB"},
+	}
+	for _, tc := range cases {
+		if got := humanBytes(tc.in); got != tc.want {
+			t.Errorf("humanBytes(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestPathTranslator(t *testing.T) {
 	cases := []struct {
 		name      string

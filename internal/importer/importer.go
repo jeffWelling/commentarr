@@ -56,6 +56,14 @@ type Result struct {
 	TrashedPath string
 	Violations  []safety.Violation
 	Error       error
+
+	// Diagnostics — populated on the success path so the caller can
+	// log + report meaningful detail without re-deriving them.
+	Container             string  // "mkv", "mp4", etc — from the validator
+	SizeBytes             int64   // size of the downloaded file at import time
+	HasCommentary         bool    // classifier verdict
+	ClassifierConfidence  float64 // 0..1
+	PlacementMode         placer.Mode
 }
 
 // Importer is the orchestrator.
@@ -138,6 +146,11 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 	}
 	r.FinalPath = placeRes.FinalPath
 	r.TrashedPath = placeRes.TrashedPath
+	r.PlacementMode = placeRes.Mode
+	r.Container = vr.Container
+	r.SizeBytes = vr.SizeBytes
+	r.HasCommentary = verdict.HasCommentary
+	r.ClassifierConfidence = verdict.Confidence
 
 	// 5. Record trash.
 	if placeRes.TrashedPath != "" {

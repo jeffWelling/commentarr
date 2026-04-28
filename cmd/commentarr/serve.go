@@ -591,7 +591,25 @@ func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo,
 			log.Printf("import: MarkResolved %s: %v", t.ID, err)
 		}
 	}
-	log.Printf("import: %s -> %s (outcome=%s)", t.ID, res.FinalPath, res.Outcome)
+	log.Printf("import: %s -> %s (outcome=%s mode=%s container=%s size=%s commentary=%v conf=%.2f)",
+		t.ID, res.FinalPath, res.Outcome, res.PlacementMode, res.Container,
+		humanBytes(res.SizeBytes), res.HasCommentary, res.ClassifierConfidence)
+}
+
+// humanBytes formats a byte count as a short human-readable string
+// (kB / MB / GB / TB). Used in import-success log lines so a 9.2GB
+// Brazil import doesn't read as "size=9890461368".
+func humanBytes(b int64) string {
+	const k = 1024
+	if b < k {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := int64(k), 0
+	for n := b / k; n >= k; n /= k {
+		div *= k
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // yearOf renders a title's year as a string, returning "" when unknown
