@@ -28,6 +28,8 @@ commentarr serve
   -prowlarr-burst    Prowlarr token-bucket burst    default 3
   -search-interval   in-process search-loop period  default 15m  (0 disables)
   -score-threshold   likely-commentary score gate   default 8
+  -max-size-gb       skip candidates larger than    default 0    (no cap)
+                     this many GB
   -qbit-url          qBittorrent base URL           default ""  (no card shown)
   -qbit-username     qBittorrent Web UI username    default ""  (watcher disabled without it)
   -qbit-password     qBittorrent Web UI password    default ""

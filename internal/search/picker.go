@@ -19,14 +19,15 @@ import (
 // is allowed to be retried; a queued/completed/imported job blocks
 // further submissions for the same title.
 type Picker struct {
-	candidates *Repo
-	jobs       *download.JobRepo
-	client     download.DownloadClient
-	dispatcher *webhook.Dispatcher // optional; nil disables OnGrab dispatch
-	category   string
-	threshold  int
-	dryRun     bool
-	logf       func(format string, args ...any) // overridable for tests
+	candidates   *Repo
+	jobs         *download.JobRepo
+	client       download.DownloadClient
+	dispatcher   *webhook.Dispatcher // optional; nil disables OnGrab dispatch
+	category     string
+	threshold    int
+	maxSizeBytes int64 // 0 = no cap
+	dryRun       bool
+	logf         func(format string, args ...any) // overridable for tests
 }
 
 // NewPicker returns a Picker. dispatcher is optional — pass nil if
@@ -45,6 +46,21 @@ func NewPicker(candidates *Repo, jobs *download.JobRepo, client download.Downloa
 		category:   category, threshold: threshold,
 		logf: log.Printf,
 	}
+}
+
+// WithMaxSize returns the same Picker with a size cap on candidates.
+// Candidates whose Release.SizeBytes exceeds the cap are skipped, so
+// the picker prefers a same-scored release that actually fits the
+// operator's bandwidth/disk budget. Passing 0 (or negative) disables
+// the cap. Live homelab probe: Brazil's score-15 UHD candidates were
+// 60GB+ while score-15 1080p versions were ~5GB; without a cap the
+// picker can't tell them apart.
+func (p *Picker) WithMaxSize(bytes int64) *Picker {
+	if bytes <= 0 {
+		bytes = 0
+	}
+	p.maxSizeBytes = bytes
+	return p
 }
 
 // WithDryRun returns the same Picker configured for dry-run mode. In
@@ -76,7 +92,7 @@ func (p *Picker) PickAndQueueOne(ctx context.Context, titleID string) (string, b
 		metrics.PickerDecisionsTotal.WithLabelValues("error").Inc()
 		return "", false, fmt.Errorf("list candidates %s: %w", titleID, err)
 	}
-	pick, ok := selectBest(cands, p.threshold)
+	pick, ok := selectBest(cands, p.threshold, p.maxSizeBytes)
 	if !ok {
 		metrics.PickerDecisionsTotal.WithLabelValues("skipped_no_candidate").Inc()
 		return "", false, nil
@@ -136,14 +152,22 @@ func (p *Picker) hasInflightJob(ctx context.Context, titleID string) (bool, erro
 }
 
 // selectBest picks the highest-scoring likely-commentary candidate at
-// or above threshold. Candidates are already sorted desc by score.
-func selectBest(cs []Candidate, threshold int) (Candidate, bool) {
+// or above threshold, optionally bounded by maxSizeBytes. When the
+// size cap is set, candidates above the cap are skipped; the loop
+// keeps going so a smaller same-score candidate (or a smaller next-
+// score-down candidate) can still be picked. Candidates are already
+// sorted desc by score, so a below-threshold candidate triggers a
+// no-pick result regardless of size.
+func selectBest(cs []Candidate, threshold int, maxSizeBytes int64) (Candidate, bool) {
 	for _, c := range cs {
 		if !c.LikelyCommentary {
 			continue
 		}
 		if c.Score < threshold {
 			return Candidate{}, false // sorted desc — nothing else will qualify
+		}
+		if maxSizeBytes > 0 && c.Release.SizeBytes > maxSizeBytes {
+			continue // too big — try the next candidate at this score, then lower scores
 		}
 		return c, true
 	}

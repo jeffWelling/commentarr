@@ -175,6 +175,61 @@ func counterValue(t *testing.T, decision string) float64 {
 	return m.GetCounter().GetValue()
 }
 
+func TestPicker_MaxSizeSkipsOversized(t *testing.T) {
+	candRepo, jobRepo, titles := newPickerRepos(t)
+	persistCands(t, candRepo, titles, "tt-1", []verify.Scored{
+		// Same score, two sizes — the cap-aware picker should pick the
+		// smaller one. Without -max-size-gb (cap=0), the picker takes
+		// the first one returned (currently sorted by seeders DESC).
+		{Release: indexer.Release{Title: "uhd", InfoHash: "uhd", SizeBytes: 60 * 1024 * 1024 * 1024, Seeders: 200}, Score: 15, LikelyCommentary: true},
+		{Release: indexer.Release{Title: "fhd", InfoHash: "fhd", SizeBytes: 5 * 1024 * 1024 * 1024, Seeders: 100}, Score: 15, LikelyCommentary: true},
+	})
+
+	client := &fakePickClient{}
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8).WithMaxSize(10 * 1024 * 1024 * 1024)
+	if _, _, err := p.PickAndQueueOne(context.Background(), "tt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.added) != 1 {
+		t.Fatalf("expected 1 add, got %d", len(client.added))
+	}
+	if !strings.Contains(client.added[0].MagnetOrURL, "fhd") {
+		t.Errorf("size cap didn't push picker past the UHD: %+v", client.added[0])
+	}
+}
+
+func TestPicker_NoMaxSizeAcceptsAnything(t *testing.T) {
+	candRepo, jobRepo, titles := newPickerRepos(t)
+	persistCands(t, candRepo, titles, "tt-1", []verify.Scored{
+		{Release: indexer.Release{Title: "uhd", InfoHash: "uhd", SizeBytes: 60 * 1024 * 1024 * 1024}, Score: 15, LikelyCommentary: true},
+	})
+	p := NewPicker(candRepo, jobRepo, &fakePickClient{}, nil, "commentarr", 8) // no WithMaxSize
+	_, queued, err := p.PickAndQueueOne(context.Background(), "tt-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("default behavior is no cap, should queue")
+	}
+}
+
+func TestPicker_MaxSizeFallsThroughToLowerScore(t *testing.T) {
+	candRepo, jobRepo, titles := newPickerRepos(t)
+	persistCands(t, candRepo, titles, "tt-1", []verify.Scored{
+		{Release: indexer.Release{Title: "huge15", InfoHash: "h15", SizeBytes: 60 * 1024 * 1024 * 1024}, Score: 15, LikelyCommentary: true},
+		{Release: indexer.Release{Title: "small10", InfoHash: "s10", SizeBytes: 5 * 1024 * 1024 * 1024}, Score: 10, LikelyCommentary: true},
+	})
+
+	client := &fakePickClient{}
+	p := NewPicker(candRepo, jobRepo, client, nil, "commentarr", 8).WithMaxSize(10 * 1024 * 1024 * 1024)
+	if _, _, err := p.PickAndQueueOne(context.Background(), "tt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.added) != 1 || !strings.Contains(client.added[0].MagnetOrURL, "s10") {
+		t.Fatalf("expected fall-through to score-10 small candidate, got %+v", client.added)
+	}
+}
+
 func TestPicker_DryRunSkipsAddAndSave(t *testing.T) {
 	candRepo, jobRepo, titles := newPickerRepos(t)
 	persistCands(t, candRepo, titles, "tt-1", []verify.Scored{

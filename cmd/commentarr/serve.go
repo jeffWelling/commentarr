@@ -50,6 +50,7 @@ func serveCmd(args []string) error {
 	prowlarrBurst := fset.Int("prowlarr-burst", 3, "Prowlarr token-bucket burst")
 	searchInterval := fset.Duration("search-interval", 15*time.Minute, "how often the in-process search loop fires (0 disables)")
 	scoreThreshold := fset.Int("score-threshold", 8, "release-score threshold for likely-commentary flag")
+	maxSizeGB := fset.Float64("max-size-gb", 0, "skip candidates larger than this many GB (0 = no cap). Useful when same-scored 1080p (~5GB) and 2160p UHD (~60GB) releases both qualify and you'd rather have the smaller one.")
 	qbitURL := fset.String("qbit-url", "", "qBittorrent base URL (optional; shows up in the UI when set)")
 	qbitUsername := fset.String("qbit-username", "", "qBittorrent Web UI username (required to actually run the watcher)")
 	qbitPassword := fset.String("qbit-password", "", "qBittorrent Web UI password")
@@ -157,7 +158,8 @@ func serveCmd(args []string) error {
 	dlClient, dlOK := buildDownloadClient(*qbitURL, *qbitUsername, *qbitPassword, *qbitName)
 
 	if dlOK && *pickerInterval > 0 {
-		ticks = append(ticks, buildPickerTick(d, dlClient, *watchCategory, *scoreThreshold, *pickerInterval, *dryRun, brokerObserver))
+		maxSize := int64(*maxSizeGB * 1024 * 1024 * 1024)
+		ticks = append(ticks, buildPickerTick(d, dlClient, *watchCategory, *scoreThreshold, *pickerInterval, *dryRun, brokerObserver, maxSize))
 		mode := ""
 		if *dryRun {
 			mode = " (dry-run)"
@@ -396,10 +398,10 @@ func startWatcher(ctx context.Context, client download.DownloadClient, category 
 // every interval and queues the top likely-commentary candidate per
 // title via the Picker. Eligibility checks (existing in-flight job,
 // score threshold) live inside Picker.PickAndQueueOne.
-func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration, dryRun bool, brokerObserver webhook.Observer) daemon.Tick {
+func buildPickerTick(d *sql.DB, client download.DownloadClient, category string, threshold int, interval time.Duration, dryRun bool, brokerObserver webhook.Observer, maxSizeBytes int64) daemon.Tick {
 	picker := search.NewPicker(search.NewRepo(d), download.NewJobRepo(d), client,
 		withBrokerObserver(webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}), brokerObserver),
-		category, threshold).WithDryRun(dryRun)
+		category, threshold).WithDryRun(dryRun).WithMaxSize(maxSizeBytes)
 	q := queue.New(d)
 	return daemon.Tick{
 		Name:     "picker",
