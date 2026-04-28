@@ -1,5 +1,18 @@
 # Commentarr
 
+> ⚠️ **Work in progress — not ready for end users.** Commentarr is at
+> roughly the "it ran end-to-end once on the author's homelab" stage.
+> The code, schema, flags, container image, and chart values can all
+> change between commits without notice. There's no upgrade path
+> guarantee, no battle-testing in any second deployment, and several
+> known gaps (see `docs/OPEN_QUESTIONS.md`-equivalent items in the
+> issue tracker / project notes). If you're tempted to point this at a
+> real library you care about, **don't** — or run with `-dry-run` and
+> `-placement-mode=sidecar` so nothing destructive happens. Bug
+> reports + design feedback welcome; install instructions are aimed at
+> people who want to read the code, not at people who want a working
+> tool today.
+
 *arr-ecosystem tool that finds and acquires commentary-bearing releases
 of movies and TV episodes you already own. Think Radarr, but it hunts
 for director's commentaries, Criterion editions, and special-edition
@@ -26,17 +39,46 @@ Sibling projects:
 
 ## Status
 
-**v1.0** — full pipeline end-to-end. 22 Go packages, React 19 + Vite
-SPA embedded via `go:embed`, Helm chart, multi-arch Dockerfile.
-Classifier benchmark on 139 titles: precision 0.98, recall 1.00,
-F1 0.99.
+**Pre-alpha.** v0.1.0 was tagged so the container image has a name,
+not because the project is ready to use. What exists today:
 
-The in-process daemon runs the full pipeline end-to-end when both
-Prowlarr and qBit are configured: search → pick top candidate →
-download → watch for completion → validate → classify → safety →
-place → trash. Each stage is independently togglable via flags or
-chart values — disabled stages can run as `commentarr search` /
-`commentarr import` from cron instead.
+- Pipeline runs end-to-end against real services (homelab Prowlarr +
+  qBittorrent + SMB-mounted media library). Classifier benchmark on
+  the author's library: precision 0.98, recall 1.00, F1 0.99 across
+  139 titles. **One** end-to-end real-world download has been
+  performed (Brazil 1985 Criterion).
+- 22 Go packages, ~250 unit + integration tests (race-clean), React
+  SPA, Helm chart, multi-arch Dockerfile, GitHub Actions CI +
+  release-on-tag workflow.
+
+What this means in practice:
+
+- **It hasn't been deployed by anyone but the author.** No second
+  homelab has tried it. The Helm chart works against my K8s cluster
+  and helm-lint passes; that's the entire deployment validation
+  beyond `docker run`.
+- **The data model isn't stable.** The DB migrations are versioned,
+  but I'll happily reorder/replace them if it makes the schema
+  cleaner. Don't expect to upgrade across releases without wiping
+  state.
+- **Flags + chart values are still moving.** A flag I shipped in
+  v0.1.0 may be renamed in v0.1.1.
+- **Several real-world gaps known** — slow classifier on
+  remote-mounted storage (33 min for 9.2GB over SMB-over-VPN; ~Nx
+  faster on local disk), modern blockbusters often have no
+  commentary-tagged release in any indexer (Deadpool 2016: 3 of 177
+  candidates had "Commentary" in the title), no integration with
+  Radarr/Sonarr's first-time grab decision (Q8 in
+  `~/claude/projects/commentarr/OPEN_QUESTIONS.md`).
+
+When the daemon is configured (Prowlarr URL+key, qBit URL+creds), it
+runs the full loop: search → pick top candidate → download → watch
+for completion → validate → classify → safety → place → trash. Each
+stage is independently togglable via flags or chart values; disabled
+stages can run as `commentarr search` / `commentarr import` from
+cron instead. **Always start with `-dry-run`** if you do try it
+against real services — the dry-run mode logs what *would* be queued
+without actually submitting torrents or moving files.
 
 ## Build
 
@@ -79,15 +121,26 @@ Two flags worth knowing about for first-deploy testing:
   by qBit on another (e.g., daemon on Mac with SMB mount of qBit's
   `/downloads` at `/Volumes/downloads`).
 
-## Quickstart — Docker
+## Quickstart — Docker (try-it-out, not production)
 
 ```bash
 docker run -d --name commentarr \
   -p 7878:7878 \
   -v "$PWD/data:/data" \
   -v /path/to/media:/media:ro \
-  ghcr.io/jeffwelling/commentarr:latest
+  ghcr.io/jeffwelling/commentarr:latest \
+  serve -dry-run \
+    -prowlarr-url <…> -prowlarr-api-key <…> \
+    -qbit-url <…> -qbit-username <…> -qbit-password <…>
 ```
+
+`-dry-run` is the right mode for first contact: the daemon will
+search, pick, and *log* what it would queue, without actually
+submitting torrents or touching files. Drop the flag once you've
+satisfied yourself it's picking sensible releases. **Don't drop the
+flag against a library you care about** until you've also reviewed
+the placement-mode + safety-rule defaults in
+`docs/SAFETY_RULES_REFERENCE.md`.
 
 First startup mints an API key and prints it to stderr once — save it.
 Open http://localhost:7878 and paste the key at the first-run prompt.
