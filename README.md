@@ -105,6 +105,10 @@ UI or REST API — adding an indexer doesn't require a pod restart.
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 [docs/SAFETY_RULES_REFERENCE.md](docs/SAFETY_RULES_REFERENCE.md).
 
+For Radarr/Sonarr setups, you can prefer commentary-tagged releases
+at *grab* time (instead of waiting for Commentarr to retrofit) — see
+[docs/RADARR_FIRST_TIME_RIGHT.md](docs/RADARR_FIRST_TIME_RIGHT.md).
+
 ## Testing
 
 ```bash
