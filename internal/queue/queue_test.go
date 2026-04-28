@@ -128,6 +128,72 @@ func TestQueue_DueForSearch_RespectsNextSearchAt(t *testing.T) {
 	}
 }
 
+func TestQueue_MarkResolvedWithRecheck_SchedulesRecheck(t *testing.T) {
+	q, titles := newTestQueue(t)
+	ctx := context.Background()
+	tt := title.Title{ID: "r:1", Kind: title.KindMovie, DisplayName: "Resolved", FilePath: "/r.mkv"}
+	if err := titles.Insert(ctx, tt); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.MarkResolvedWithRecheck(ctx, tt.ID, 90*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	// Within the recheck window: nothing due.
+	if got, _ := q.DueForRecheck(ctx, time.Now()); len(got) != 0 {
+		t.Errorf("expected 0 due-for-recheck immediately after mark, got %d", len(got))
+	}
+	// Past the recheck window: the title shows up.
+	if got, _ := q.DueForRecheck(ctx, time.Now().Add(91*24*time.Hour)); len(got) != 1 {
+		t.Errorf("expected 1 due-for-recheck after window expired, got %d", len(got))
+	}
+}
+
+func TestQueue_MarkResolvedWithRecheck_ZeroIntervalFallsBack(t *testing.T) {
+	// after<=0 must behave like the plain MarkResolved — title is
+	// resolved but next_recheck_at stays NULL so DueForRecheck never
+	// surfaces it. Operators who don't want re-search opt out by
+	// setting -recheck-interval=0.
+	q, titles := newTestQueue(t)
+	ctx := context.Background()
+	tt := title.Title{ID: "r:2", Kind: title.KindMovie, DisplayName: "OptOut", FilePath: "/r2.mkv"}
+	_ = titles.Insert(ctx, tt)
+	if err := q.MarkResolvedWithRecheck(ctx, tt.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := q.DueForRecheck(ctx, time.Now().Add(10*365*24*time.Hour)); len(got) != 0 {
+		t.Errorf("interval=0 should mean no recheck ever; got %d", len(got))
+	}
+	// But the title IS marked resolved.
+	e, err := q.Get(ctx, tt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Status != StatusResolved {
+		t.Errorf("expected resolved status, got %q", e.Status)
+	}
+}
+
+func TestQueue_UpdateNextRecheckAtAdvancesWindow(t *testing.T) {
+	q, titles := newTestQueue(t)
+	ctx := context.Background()
+	tt := title.Title{ID: "r:3", Kind: title.KindMovie, DisplayName: "C", FilePath: "/c.mkv"}
+	_ = titles.Insert(ctx, tt)
+	_ = q.MarkResolvedWithRecheck(ctx, tt.ID, time.Microsecond)
+	time.Sleep(2 * time.Millisecond)
+
+	// Initially due (1µs window already elapsed).
+	if got, _ := q.DueForRecheck(ctx, time.Now()); len(got) != 1 {
+		t.Fatal("expected the title to be due before advance")
+	}
+	// Advance the recheck window.
+	if err := q.UpdateNextRecheckAt(ctx, tt.ID, time.Now().Add(1*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := q.DueForRecheck(ctx, time.Now()); len(got) != 0 {
+		t.Errorf("expected 0 due after advancing recheck window, got %d", len(got))
+	}
+}
+
 func TestQueue_IncrementSearchMiss(t *testing.T) {
 	q, titles := newTestQueue(t)
 	ctx := context.Background()

@@ -65,6 +65,46 @@ func (s *Searcher) SearchDue(ctx context.Context, now time.Time) (int, error) {
 	return processed, nil
 }
 
+// RecheckResolved runs one search pass for every resolved title whose
+// next_recheck_at has elapsed. New candidates are persisted into
+// title_candidates the same way as SearchDue does for wanted titles —
+// the operator can review them via /api/v1/wanted/{title}/candidates
+// and decide whether to act on a new Criterion / Director's Cut /
+// commentary release that's appeared since the original import.
+//
+// next_recheck_at is advanced by `interval` after each title regardless
+// of whether new candidates appeared, so a quiet indexer doesn't
+// trigger a re-search storm.
+//
+// Q8B in OPEN_QUESTIONS.md.
+func (s *Searcher) RecheckResolved(ctx context.Context, now time.Time, interval time.Duration) (int, error) {
+	if interval <= 0 {
+		return 0, nil
+	}
+	due, err := s.queue.DueForRecheck(ctx, now)
+	if err != nil {
+		return 0, fmt.Errorf("due for recheck: %w", err)
+	}
+	processed := 0
+	for _, e := range due {
+		if err := ctx.Err(); err != nil {
+			return processed, err
+		}
+		t, err := s.titles.FindByID(ctx, e.TitleID)
+		if err != nil {
+			return processed, fmt.Errorf("find title %s: %w", e.TitleID, err)
+		}
+		if err := s.searchOne(ctx, t); err != nil {
+			return processed, err
+		}
+		if err := s.queue.UpdateNextRecheckAt(ctx, t.ID, now.Add(interval)); err != nil {
+			return processed, fmt.Errorf("advance next_recheck_at %s: %w", t.ID, err)
+		}
+		processed++
+	}
+	return processed, nil
+}
+
 func (s *Searcher) searchOne(ctx context.Context, t title.Title) error {
 	queries := indexer.BuildQueries(t.DisplayName, t.Year, t.Season, t.Episode)
 	dedup := indexer.NewDeduper()

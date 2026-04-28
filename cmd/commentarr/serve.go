@@ -63,6 +63,7 @@ func serveCmd(args []string) error {
 	placementSeparate := fset.String("placement-separate-root", "", "alt library root (required when placement-mode=separate-library)")
 	placementTrashDir := fset.String("placement-trash-dir", "", "trash directory (required when placement-mode=replace)")
 	confidenceMin := fset.Float64("confidence-min", 0.85, "auto-import classifier confidence threshold")
+	recheckInterval := fset.Duration("recheck-interval", 6*30*24*time.Hour, "how long after import to re-search a resolved title for upgrade candidates (e.g. a Criterion edition that ships years after the regular BD); 0 disables")
 	dryRun := fset.Bool("dry-run", false, "log what the picker + importer would do without queueing downloads or moving files")
 	pathTranslateFrom := fset.String("path-translate-from", "", "rewrite this prefix in qBit save paths (e.g. /downloads if qBit reports container paths)")
 	pathTranslateTo := fset.String("path-translate-to", "", "...to this prefix on the daemon's filesystem (e.g. /Volumes/downloads for an SMB mount)")
@@ -148,7 +149,7 @@ func serveCmd(args []string) error {
 		}},
 	}
 	if tick, ok := buildSearchTick(d, *prowlarrURL, *prowlarrAPIKey, *prowlarrName,
-		*prowlarrRPM, *prowlarrBurst, *scoreThreshold, *searchInterval); ok {
+		*prowlarrRPM, *prowlarrBurst, *scoreThreshold, *searchInterval, *recheckInterval); ok {
 		ticks = append(ticks, tick)
 		fmt.Printf("search loop enabled: prowlarr=%q, interval=%s\n", *prowlarrName, *searchInterval)
 	}
@@ -188,7 +189,7 @@ func serveCmd(args []string) error {
 				FilenameTemplate: *placementTemplate,
 				TrashDir:         *placementTrashDir,
 				SeparateRoot:     *placementSeparate,
-			}, *confidenceMin, pathTranslator(*pathTranslateFrom, *pathTranslateTo), brokerObserver)
+			}, *confidenceMin, pathTranslator(*pathTranslateFrom, *pathTranslateTo), brokerObserver, *recheckInterval)
 			fmt.Printf("watcher+importer enabled: qbit=%q, category=%q, interval=%s\n",
 				*qbitName, *watchCategory, *watchInterval)
 			if *pathTranslateFrom != "" {
@@ -329,7 +330,7 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 // missing) or the operator disabled it via interval=0. Logging is
 // minimal because each individual indexer call already emits metrics +
 // circuit-breaker logs at its own layer.
-func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold int, interval time.Duration) (daemon.Tick, bool) {
+func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold int, interval time.Duration, recheckInterval time.Duration) (daemon.Tick, bool) {
 	if url == "" || apiKey == "" || interval <= 0 {
 		return daemon.Tick{}, false
 	}
@@ -353,13 +354,24 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 		Name:     "search-due",
 		Interval: interval,
 		Fn: func(c context.Context) {
-			n, err := searcher.SearchDue(c, time.Now())
+			now := time.Now()
+			n, err := searcher.SearchDue(c, now)
 			if err != nil {
 				log.Printf("search tick: %v", err)
 				return
 			}
 			if n > 0 {
-				log.Printf("search tick: processed %d titles", n)
+				log.Printf("search tick: processed %d wanted titles", n)
+			}
+			if recheckInterval > 0 {
+				rn, err := searcher.RecheckResolved(c, now, recheckInterval)
+				if err != nil {
+					log.Printf("recheck tick: %v", err)
+					return
+				}
+				if rn > 0 {
+					log.Printf("recheck tick: re-searched %d resolved titles", rn)
+				}
 			}
 		},
 	}, true
@@ -489,7 +501,7 @@ func pathTranslator(from, to string) func(string) string {
 	}
 }
 
-func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64, translatePath func(string) string, brokerObserver webhook.Observer) {
+func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadClient, events <-chan download.Event, placeCfg placer.Config, confidenceMin float64, translatePath func(string) string, brokerObserver webhook.Observer, recheckInterval time.Duration) {
 	jobs := download.NewJobRepo(d)
 	titles := title.NewRepo(d)
 	q := queue.New(d)
@@ -525,7 +537,7 @@ func importerConsumer(ctx context.Context, d *sql.DB, client download.DownloadCl
 				"name":          e.Status.Name,
 				"save_path":     e.Status.SavePath,
 			})
-			handleEvent(ctx, jobs, titles, q, imp, e)
+			handleEvent(ctx, jobs, titles, q, imp, e, recheckInterval)
 		}
 	}
 }
@@ -537,7 +549,7 @@ type importRunner interface {
 	Import(ctx context.Context, req importer.Request) (importer.Result, error)
 }
 
-func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, q *queue.Queue, imp importRunner, e download.Event) {
+func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo, q *queue.Queue, imp importRunner, e download.Event, recheckInterval time.Duration) {
 	metrics.WatcherEventsTotal.WithLabelValues(e.Client, string(e.Kind)).Inc()
 	if e.Kind != download.EventCompleted {
 		log.Printf("download %s: client=%s job=%s", e.Kind, e.Client, e.Status.ClientJobID)
@@ -587,7 +599,7 @@ func handleEvent(ctx context.Context, jobs *download.JobRepo, titles title.Repo,
 	// error) leave the title wanted so the next search cycle can find
 	// a better candidate.
 	if res.Outcome == importer.OutcomeSuccess {
-		if err := q.MarkResolved(ctx, t.ID); err != nil {
+		if err := q.MarkResolvedWithRecheck(ctx, t.ID, recheckInterval); err != nil {
 			log.Printf("import: MarkResolved %s: %v", t.ID, err)
 		}
 	}

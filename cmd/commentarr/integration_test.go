@@ -153,7 +153,7 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	imp := &stubImporter{res: importer.Result{
 		Outcome: importer.OutcomeSuccess, FinalPath: filepath.Join(libDir, "test-movie-criterion.mkv"),
 	}}
-	handleEvent(ctx, jobs, titles, q, imp, ev)
+	handleEvent(ctx, jobs, titles, q, imp, ev, 0)
 	if imp.calls != 1 {
 		t.Errorf("importer call count: got %d want 1", imp.calls)
 	}

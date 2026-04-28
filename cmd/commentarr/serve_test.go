@@ -43,7 +43,7 @@ func TestHandleEvent_NonCompletedKindIsLogOnly(t *testing.T) {
 	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
 		Kind: download.EventError, Client: "qbit",
 		Status: download.Status{ClientJobID: "x"},
-	})
+	}, 0)
 	if imp.calls != 0 {
 		t.Fatal("error events must not invoke importer")
 	}
@@ -55,7 +55,7 @@ func TestHandleEvent_JobNotFoundIsNoOp(t *testing.T) {
 	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
 		Kind: download.EventCompleted, Client: "qbit",
 		Status: download.Status{ClientJobID: "missing"},
-	})
+	}, 0)
 	if imp.calls != 0 {
 		t.Fatal("missing job should never reach importer")
 	}
@@ -70,7 +70,7 @@ func TestHandleEvent_TitleMissingMarksJobError(t *testing.T) {
 	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
 		Kind: download.EventCompleted, Client: "qbit",
 		Status: download.Status{ClientJobID: "abc", SavePath: "/nowhere"},
-	})
+	}, 0)
 	got, _ := jobs.FindByClientJob(context.Background(), "qbit", "abc")
 	if got.Status != "error" || got.ID != id {
 		t.Fatalf("expected job marked error, got %+v", got)
@@ -90,7 +90,7 @@ func TestHandleEvent_NoMainVideoMarksJobError(t *testing.T) {
 	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
 		Kind: download.EventCompleted, Client: "qbit",
 		Status: download.Status{ClientJobID: "abc", SavePath: dir},
-	})
+	}, 0)
 	got, _ := jobs.FindByClientJob(context.Background(), "qbit", "abc")
 	if got.Status != "error" {
 		t.Fatalf("expected error status, got %q", got.Status)
@@ -118,7 +118,7 @@ func TestHandleEvent_SuccessMarksJobImportedAndQueueResolved(t *testing.T) {
 	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
 		Kind: download.EventCompleted, Client: "qbit",
 		Status: download.Status{ClientJobID: "abc", SavePath: dir},
-	})
+	}, 0)
 
 	got, _ := jobs.FindByClientJob(context.Background(), "qbit", "abc")
 	if got.Status != "imported" {
@@ -146,7 +146,7 @@ func TestHandleEvent_NonSuccessOutcomeLeavesQueueWanted(t *testing.T) {
 	handleEvent(context.Background(), jobs, titles, q, imp, download.Event{
 		Kind: download.EventCompleted, Client: "qbit",
 		Status: download.Status{ClientJobID: "abc", SavePath: dir},
-	})
+	}, 0)
 
 	wanted, _ := q.Get(context.Background(), "tt-1")
 	if wanted.Status != queue.StatusWanted {
@@ -282,7 +282,7 @@ func TestBuildSearchTick_DisabledWhenProwlarrUnconfigured(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, ok := buildSearchTick(nil, tc.url, tc.key, "p", 6, 3, 8, tc.interval)
+			_, ok := buildSearchTick(nil, tc.url, tc.key, "p", 6, 3, 8, tc.interval, 0)
 			if ok {
 				t.Fatal("expected tick to be disabled")
 			}
@@ -407,7 +407,7 @@ func TestBuildPickerTick_ProducesNamedTick(t *testing.T) {
 
 func TestBuildSearchTick_EnabledWhenProwlarrConfigured(t *testing.T) {
 	d := newTestDB(t)
-	tick, ok := buildSearchTick(d, "http://prowlarr.test", "abc", "main", 6, 3, 8, time.Minute)
+	tick, ok := buildSearchTick(d, "http://prowlarr.test", "abc", "main", 6, 3, 8, time.Minute, 0)
 	if !ok {
 		t.Fatal("expected tick to be enabled")
 	}

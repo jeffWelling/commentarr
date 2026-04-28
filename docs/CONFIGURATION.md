@@ -42,6 +42,8 @@ commentarr serve
   -placement-separate-root  alt library root        default ""   (required for separate-library)
   -placement-trash-dir      trash directory         default ""   (required for replace)
   -confidence-min    auto-import classifier gate    default 0.85
+  -recheck-interval  re-search resolved titles      default 4380h (≈6mo)
+                     this long after import (0 disables)
   -dry-run           log picker + importer actions  default false
                      without queueing or moving anything
   -path-translate-from  rewrite this prefix         default ""
@@ -70,6 +72,14 @@ groups are set:
    located, and the importer runs the full pipeline (validate →
    classify → safety → place → trash → webhook). The job row is then
    marked `imported` or `error`.
+4. **Recheck (Q8B)** — on successful import, the title's
+   `next_recheck_at` is set to now + `-recheck-interval` (default
+   ≈6 months). Each subsequent search tick also calls
+   `RecheckResolved`, which re-queries Prowlarr for titles past
+   their recheck window. New candidates appear in
+   `title_candidates` for the operator to review — useful when a
+   Criterion edition appears years after the regular BD already
+   landed. Set `-recheck-interval=0` to disable.
 
 Disable any individual stage by leaving its credentials empty or
 setting its interval to 0. Disabled stages can be replaced with the
