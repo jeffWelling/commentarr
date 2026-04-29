@@ -194,6 +194,114 @@ func TestQueue_UpdateNextRecheckAtAdvancesWindow(t *testing.T) {
 	}
 }
 
+func TestQueue_MarkRecheckOutcome_UpgradeFoundResetsStreak(t *testing.T) {
+	// When detectUpgrades finds an upgrade for a title, the streak resets
+	// to 0 and next_recheck_at is left where RecheckResolved put it
+	// (now + base interval) — no stretch.
+	q, titles := newTestQueue(t)
+	ctx := context.Background()
+	tt := title.Title{ID: "rs:1", Kind: title.KindMovie, DisplayName: "X", FilePath: "/x.mkv"}
+	_ = titles.Insert(ctx, tt)
+	_ = q.MarkResolvedWithRecheck(ctx, tt.ID, time.Hour)
+
+	// Build up a streak first.
+	for i := 0; i < 3; i++ {
+		if err := q.MarkRecheckOutcome(ctx, tt.ID, false, time.Hour, 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := q.Get(ctx, tt.ID)
+	if got.EmptyRecheckStreak != 3 {
+		t.Fatalf("setup: expected streak=3, got %d", got.EmptyRecheckStreak)
+	}
+
+	// Now an upgrade is found.
+	when := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	if err := q.UpdateNextRecheckAt(ctx, tt.ID, when); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.MarkRecheckOutcome(ctx, tt.ID, true, time.Hour, 3); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = q.Get(ctx, tt.ID)
+	if got.EmptyRecheckStreak != 0 {
+		t.Errorf("expected streak reset to 0, got %d", got.EmptyRecheckStreak)
+	}
+	// next_recheck_at MUST NOT be touched on the success path.
+	if !got.NextRecheckAt.Equal(when) {
+		t.Errorf("expected next_recheck_at unchanged (%v), got %v", when, got.NextRecheckAt)
+	}
+}
+
+func TestQueue_MarkRecheckOutcome_EmptyBumpsAndDoubles(t *testing.T) {
+	// First empty recheck: streak goes 0→1, next_recheck_at = now + base*2.
+	// Second:              streak 1→2, base*4.
+	// Third:               streak 2→3, base*8.
+	// Fourth (cap=3):      streak 3→4, base*8 (capped at 2^3).
+	q, titles := newTestQueue(t)
+	ctx := context.Background()
+	tt := title.Title{ID: "rs:2", Kind: title.KindMovie, DisplayName: "Y", FilePath: "/y.mkv"}
+	_ = titles.Insert(ctx, tt)
+	_ = q.MarkResolvedWithRecheck(ctx, tt.ID, time.Hour)
+
+	base := time.Hour
+	cap := 3
+	expected := []struct {
+		streak int
+		mult   int
+	}{
+		{1, 2},
+		{2, 4},
+		{3, 8},
+		{4, 8}, // capped
+		{5, 8}, // capped
+	}
+	for i, exp := range expected {
+		before := time.Now().UTC()
+		if err := q.MarkRecheckOutcome(ctx, tt.ID, false, base, cap); err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		got, err := q.Get(ctx, tt.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.EmptyRecheckStreak != exp.streak {
+			t.Errorf("iter %d: expected streak=%d, got %d", i, exp.streak, got.EmptyRecheckStreak)
+		}
+		want := before.Add(base * time.Duration(exp.mult))
+		// Allow 5s slack for clock advance during the call.
+		if got.NextRecheckAt.Before(want.Add(-5*time.Second)) || got.NextRecheckAt.After(want.Add(5*time.Second)) {
+			t.Errorf("iter %d: expected next_recheck_at ≈ %v, got %v", i, want, got.NextRecheckAt)
+		}
+	}
+}
+
+func TestQueue_MarkResolvedWithRecheck_ResetsStreak(t *testing.T) {
+	// A fresh import (MarkResolvedWithRecheck) must zero out any
+	// previously-accumulated streak — the new release is a clean slate
+	// for "is the world tagging commentary for this title?".
+	q, titles := newTestQueue(t)
+	ctx := context.Background()
+	tt := title.Title{ID: "rs:3", Kind: title.KindMovie, DisplayName: "Z", FilePath: "/z.mkv"}
+	_ = titles.Insert(ctx, tt)
+	_ = q.MarkResolvedWithRecheck(ctx, tt.ID, time.Hour)
+	for i := 0; i < 5; i++ {
+		_ = q.MarkRecheckOutcome(ctx, tt.ID, false, time.Hour, 3)
+	}
+	got, _ := q.Get(ctx, tt.ID)
+	if got.EmptyRecheckStreak != 5 {
+		t.Fatalf("setup: expected streak=5, got %d", got.EmptyRecheckStreak)
+	}
+	// Now operator does another import for the same title.
+	if err := q.MarkResolvedWithRecheck(ctx, tt.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = q.Get(ctx, tt.ID)
+	if got.EmptyRecheckStreak != 0 {
+		t.Errorf("MarkResolvedWithRecheck should reset streak; got %d", got.EmptyRecheckStreak)
+	}
+}
+
 func TestQueue_IncrementSearchMiss(t *testing.T) {
 	q, titles := newTestQueue(t)
 	ctx := context.Background()

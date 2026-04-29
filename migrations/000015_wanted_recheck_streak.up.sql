@@ -1,0 +1,11 @@
+-- Adaptive backoff for empty rechecks. Counts consecutive recheck
+-- cycles that yielded no upgrade for a title; each empty cycle pushes
+-- next_recheck_at out further so a title the indexer ecosystem has no
+-- commentary release for (e.g., modern blockbusters) doesn't get
+-- pointlessly re-searched every 6 months forever.
+--
+-- Reset to 0 by Queue.MarkRecheckOutcome whenever an upgrade IS found,
+-- and by MarkResolvedWithRecheck on a fresh import.
+--
+-- See ~/claude/projects/commentarr/OPEN_QUESTIONS.md Q8B for context.
+ALTER TABLE wanted ADD COLUMN empty_recheck_streak INTEGER NOT NULL DEFAULT 0;

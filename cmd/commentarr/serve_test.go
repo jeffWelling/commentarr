@@ -360,7 +360,7 @@ func TestDetectUpgrades_FiresWhenCandidateOutscoresImported(t *testing.T) {
 		got = append(got, e)
 	})
 
-	detectUpgrades(ctx, d, []string{"tt-brazil"}, 8, disp)
+	detectUpgrades(ctx, d, []string{"tt-brazil"}, 8, time.Hour, disp)
 
 	if len(got) != 1 || got[0] != webhook.EventUpgradeAvailable {
 		t.Fatalf("expected one OnUpgradeAvailable, got %v", got)
@@ -399,7 +399,7 @@ func TestDetectUpgrades_SilentWhenNoBetterCandidate(t *testing.T) {
 		}
 	})
 
-	detectUpgrades(ctx, d, []string{"tt-fixed"}, 8, disp)
+	detectUpgrades(ctx, d, []string{"tt-fixed"}, 8, time.Hour, disp)
 	if fired {
 		t.Fatal("equal-score candidate must not fire OnUpgradeAvailable")
 	}
@@ -410,7 +410,7 @@ func TestDetectUpgrades_SilentWhenNoImportedJob(t *testing.T) {
 	disp := webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{})
 	var fired bool
 	disp.AddObserver(func(_ webhook.Event, _ map[string]interface{}) { fired = true })
-	detectUpgrades(context.Background(), d, []string{"tt-orphan"}, 8, disp)
+	detectUpgrades(context.Background(), d, []string{"tt-orphan"}, 8, time.Hour, disp)
 	if fired {
 		t.Fatal("title with no imported job must not fire")
 	}

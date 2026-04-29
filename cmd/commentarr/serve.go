@@ -373,7 +373,7 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 				}
 				if len(rechecked) > 0 {
 					log.Printf("recheck tick: re-searched %d resolved titles", len(rechecked))
-					detectUpgrades(c, d, rechecked, threshold,
+					detectUpgrades(c, d, rechecked, threshold, recheckInterval,
 						withBrokerObserver(webhook.NewDispatcher(webhook.NewRepo(d), webhook.DispatcherConfig{}), brokerObserver))
 				}
 			}
@@ -383,7 +383,11 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 
 // detectUpgrades walks the just-rechecked title IDs and fires
 // OnUpgradeAvailable for each one whose top likely-commentary
-// candidate now scores higher than the imported release does.
+// candidate now scores higher than the imported release does. It
+// also records the per-title recheck outcome so titles that keep
+// yielding nothing back off geometrically (modern blockbusters with
+// no commentary release in any indexer don't get pointlessly
+// re-searched every cycle).
 //
 // "Higher" means strictly greater. Re-scoring is deterministic: the
 // imported job's stored release_title runs through the same
@@ -394,13 +398,15 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 // here for titles whose next_recheck_at just elapsed, and
 // RecheckResolved already advanced their recheck windows by
 // `interval` before returning. So no per-tick re-fire.
-func detectUpgrades(ctx context.Context, d *sql.DB, titleIDs []string, threshold int, dispatcher *webhook.Dispatcher) {
+func detectUpgrades(ctx context.Context, d *sql.DB, titleIDs []string, threshold int, baseInterval time.Duration, dispatcher *webhook.Dispatcher) {
 	upgrades, err := upgrade.Find(ctx, search.NewRepo(d), download.NewJobRepo(d), titleIDs, threshold)
 	if err != nil {
 		log.Printf("upgrade-detect: %v", err)
 		return
 	}
+	withUpgrade := make(map[string]bool, len(upgrades))
 	for _, u := range upgrades {
+		withUpgrade[u.TitleID] = true
 		log.Printf("upgrade-detect: %s — current %q score=%d, candidate %q score=%d (indexer=%s)",
 			u.TitleID, u.CurrentRelease, u.CurrentScore,
 			u.CandidateRelease, u.CandidateScore, u.CandidateIndexer)
@@ -414,7 +420,21 @@ func detectUpgrades(ctx context.Context, d *sql.DB, titleIDs []string, threshold
 			"candidate_infohash": u.CandidateInfoHash,
 		})
 	}
+	q := queue.New(d)
+	for _, titleID := range titleIDs {
+		if err := q.MarkRecheckOutcome(ctx, titleID, withUpgrade[titleID], baseInterval, recheckBackoffCap); err != nil {
+			log.Printf("upgrade-detect: mark outcome %s: %v", titleID, err)
+		}
+	}
 }
+
+// recheckBackoffCap caps the empty-recheck-streak exponent. With base
+// interval 6mo (default), this means the longest gap between re-searches
+// of a "world has no commentary for this" title is 2^3 = 8x base = 4
+// years. Generous enough that a Criterion edition appearing 3+ years
+// later still gets noticed, tight enough that we don't waste indexer
+// quota.
+const recheckBackoffCap = 3
 
 // buildDownloadClient assembles a qBit adapter from flags. Returns
 // (nil, false) when qBit isn't fully configured — both URL and creds
