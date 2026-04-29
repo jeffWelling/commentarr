@@ -10,6 +10,7 @@ import { Safety } from './pages/Safety'
 import { Webhooks } from './pages/Webhooks'
 import { Connections } from './pages/Connections'
 import { Downloads } from './pages/Downloads'
+import { Upgrades } from './pages/Upgrades'
 import { clearAPIKey, getAPIKey } from './api/client'
 
 const qc = new QueryClient({
@@ -71,6 +72,24 @@ function SystemChip() {
   )
 }
 
+function UpgradesBadge() {
+  // Polls /api/v1/upgrades for the count only — the UI doesn't need
+  // the full payload here. The Upgrades page renders the detail.
+  const q = useQuery<{ upgrades: unknown[] }>({
+    queryKey: ['upgrades-count'],
+    queryFn: () => api.get('/api/v1/upgrades/'),
+    refetchInterval: 60_000,
+    enabled: !!getAPIKey(),
+  })
+  const n = q.data?.upgrades?.length ?? 0
+  if (n === 0) return null
+  return (
+    <span className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full text-[10px] font-bold bg-[color:var(--accent)] text-[color:var(--bg-0)]">
+      {n}
+    </span>
+  )
+}
+
 function NavBar() {
   const loc = useLocation()
   const items = [
@@ -78,6 +97,7 @@ function NavBar() {
     ['/wanted', 'Wanted'],
     ['/connections', 'Connections'],
     ['/downloads', 'Downloads'],
+    ['/upgrades', 'Upgrades'],
     ['/trash', 'Trash'],
     ['/safety', 'Safety'],
     ['/webhooks', 'Webhooks'],
@@ -102,6 +122,7 @@ function NavBar() {
               }
             >
               {label}
+              {path === '/upgrades' && <UpgradesBadge />}
             </Link>
           </li>
         ))}
@@ -139,6 +160,7 @@ export default function App() {
           <Route path="/wanted" element={<RequireAuth><Shell><Wanted /></Shell></RequireAuth>} />
           <Route path="/connections" element={<RequireAuth><Shell><Connections /></Shell></RequireAuth>} />
           <Route path="/downloads" element={<RequireAuth><Shell><Downloads /></Shell></RequireAuth>} />
+          <Route path="/upgrades" element={<RequireAuth><Shell><Upgrades /></Shell></RequireAuth>} />
           <Route path="/trash" element={<RequireAuth><Shell><Trash /></Shell></RequireAuth>} />
           <Route path="/safety" element={<RequireAuth><Shell><Safety /></Shell></RequireAuth>} />
           <Route path="/webhooks" element={<RequireAuth><Shell><Webhooks /></Shell></RequireAuth>} />

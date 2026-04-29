@@ -31,6 +31,7 @@ import (
 	"github.com/jeffWelling/commentarr/internal/sse"
 	"github.com/jeffWelling/commentarr/internal/title"
 	"github.com/jeffWelling/commentarr/internal/trash"
+	"github.com/jeffWelling/commentarr/internal/upgrade"
 	"github.com/jeffWelling/commentarr/internal/validate"
 	"github.com/jeffWelling/commentarr/internal/verify"
 	"github.com/jeffWelling/commentarr/internal/webhook"
@@ -113,7 +114,7 @@ func serveCmd(args []string) error {
 		LocalBypassCIDRs: splitCIDRs(*bypassCIDR),
 	})
 
-	mountAPIV1(server, authMW, d, broker, brokerObserver, serveConnections{
+	mountAPIV1(server, authMW, d, broker, brokerObserver, *scoreThreshold, serveConnections{
 		indexers:        infoFromProwlarr(*prowlarrURL, *prowlarrName),
 		downloadClients: infoFromQbit(*qbitURL, *qbitName),
 		startedAt:       time.Now().UTC(),
@@ -302,7 +303,7 @@ type serveConnections struct {
 	startedAt       time.Time
 }
 
-func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d *sql.DB, broker *sse.Broker, brokerObserver webhook.Observer, conn serveConnections) {
+func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d *sql.DB, broker *sse.Broker, brokerObserver webhook.Observer, scoreThreshold int, conn serveConnections) {
 	titleRepo := title.NewRepo(d)
 	q := queue.New(d)
 	candRepo := search.NewRepo(d)
@@ -320,6 +321,7 @@ func mountAPIV1(s *httpserver.Server, authMW func(http.Handler) http.Handler, d 
 	s.Mount("/api/v1/safety", authMW(v1.NewSafetyHandler(safetyRepo)))
 	s.Mount("/api/v1/webhooks", authMW(v1.NewWebhooksHandler(webhookRepo, dispatcher)))
 	s.Mount("/api/v1/system", authMW(v1.NewSystemHandler(version, conn.startedAt)))
+	s.Mount("/api/v1/upgrades", authMW(v1.NewUpgradesHandler(q, candRepo, download.NewJobRepo(d), scoreThreshold)))
 
 	s.Router().Mount("/api/v1/events", authMW(sse.NewHandler(broker)))
 }
@@ -393,48 +395,23 @@ func buildSearchTick(d *sql.DB, url, apiKey, name string, rpm, burst, threshold 
 // RecheckResolved already advanced their recheck windows by
 // `interval` before returning. So no per-tick re-fire.
 func detectUpgrades(ctx context.Context, d *sql.DB, titleIDs []string, threshold int, dispatcher *webhook.Dispatcher) {
-	candRepo := search.NewRepo(d)
-	jobRepo := download.NewJobRepo(d)
-	rules := verify.DefaultRules()
-	for _, titleID := range titleIDs {
-		job, err := jobRepo.LastImportedForTitle(ctx, titleID)
-		if err != nil {
-			// No imported job for this title (or DB error). Recheck-detect
-			// can't say whether anything's an upgrade if we don't know
-			// what we're upgrading FROM. Silent skip.
-			continue
-		}
-		currentScore := verify.ScoreTitle(job.ReleaseTitle, 0, rules).Score
-
-		cands, err := candRepo.ListCandidates(ctx, titleID)
-		if err != nil {
-			log.Printf("upgrade-detect: ListCandidates %s: %v", titleID, err)
-			continue
-		}
-		var top *search.Candidate
-		for i := range cands {
-			c := &cands[i]
-			if !c.LikelyCommentary || c.Score < threshold {
-				continue
-			}
-			top = c
-			break // ListCandidates returns score DESC — the first qualifier wins
-		}
-		if top == nil || top.Score <= currentScore {
-			continue
-		}
-
+	upgrades, err := upgrade.Find(ctx, search.NewRepo(d), download.NewJobRepo(d), titleIDs, threshold)
+	if err != nil {
+		log.Printf("upgrade-detect: %v", err)
+		return
+	}
+	for _, u := range upgrades {
 		log.Printf("upgrade-detect: %s — current %q score=%d, candidate %q score=%d (indexer=%s)",
-			titleID, job.ReleaseTitle, currentScore,
-			top.Release.Title, top.Score, top.Release.Indexer)
+			u.TitleID, u.CurrentRelease, u.CurrentScore,
+			u.CandidateRelease, u.CandidateScore, u.CandidateIndexer)
 		_ = dispatcher.Dispatch(ctx, webhook.EventUpgradeAvailable, map[string]interface{}{
-			"title_id":          titleID,
-			"current_release":   job.ReleaseTitle,
-			"current_score":     currentScore,
-			"candidate_release": top.Release.Title,
-			"candidate_score":   top.Score,
-			"candidate_indexer": top.Release.Indexer,
-			"candidate_infohash": top.Release.InfoHash,
+			"title_id":           u.TitleID,
+			"current_release":    u.CurrentRelease,
+			"current_score":      u.CurrentScore,
+			"candidate_release":  u.CandidateRelease,
+			"candidate_score":    u.CandidateScore,
+			"candidate_indexer":  u.CandidateIndexer,
+			"candidate_infohash": u.CandidateInfoHash,
 		})
 	}
 }

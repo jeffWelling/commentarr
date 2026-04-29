@@ -107,6 +107,25 @@ func TestSystem_GETReturnsVersionAndUptime(t *testing.T) {
 	}
 }
 
+func TestUpgrades_GETEmpty(t *testing.T) {
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	_ = db.Migrate(d, "../../../migrations")
+	q := queue.New(d)
+	cands := search.NewRepo(d)
+	jobs := download.NewJobRepo(d)
+	h := NewUpgradesHandler(q, cands, jobs, 8)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"upgrades":[]`) {
+		t.Fatalf("expected empty list, got %s", w.Body.String())
+	}
+}
+
 func TestJobs_GETReturnsEmptyWhenNoRepo(t *testing.T) {
 	h := NewJobsHandler(nil)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
